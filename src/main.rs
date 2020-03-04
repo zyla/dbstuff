@@ -3,7 +3,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::prelude::*;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> io::Result<()> {
     let mut listener = TcpListener::bind("0.0.0.0:8080").await?;
 
     loop {
