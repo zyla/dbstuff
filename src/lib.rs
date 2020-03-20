@@ -1,14 +1,17 @@
 mod disk_manager;
 
+#[macro_use] extern crate bitvec;
+
 use tokio::fs;
 use tokio::prelude::*;
 use std::path::Path;
 use std::collections::{HashMap};
 use std::sync::{RwLock};
 use crate::disk_manager::*;
-use std::sync::atomic::{AtomicUsize, AtomicBool};
-use std::ops::DerefMut;
+use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
+use std::ops::{Deref, DerefMut};
 use std::future::Future;
+use bitvec::vec::BitVec;
 
 struct Page {
     id: PageId,
@@ -29,6 +32,26 @@ struct BufferPoolInner {
     disk_manager: DiskManager,
     page_table: HashMap<PageId, FrameId>,
     free_frames: Vec<FrameId>,
+    ref_flag: BitVec,
+    clock_hand: usize,
+}
+
+struct PinnedPage<'a> {
+    page: &'a Page,
+}
+
+impl<'a> Drop for PinnedPage<'a> {
+    fn drop(&mut self) {
+        self.page.pin_count.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+impl Deref for PinnedPage<'_> {
+    type Target = Page;
+
+    fn deref(&self) -> &Self::Target {
+        self.page
+    }
 }
 
 impl BufferPool {
@@ -51,18 +74,31 @@ impl BufferPool {
                 disk_manager: disk_manager,
                 page_table: HashMap::with_capacity(capacity),
                 free_frames: free_frames,
+                ref_flag: bitvec![0; capacity],
+                clock_hand: 0,
             }),
         }
     }
 
-    pub async fn get_page(&self, page_id: PageId) -> io::Result<&Page> {
+    pub async fn get_page<'a>(&'a self, page_id: PageId) -> io::Result<PinnedPage<'a>> {
         let inner = self.lock.read().unwrap();
         match inner.page_table.get(&page_id) {
-            Some(&frame_id) => Ok(&self.frames[frame_id]),
+            Some(&frame_id) => {
+                unlock(inner);
+                self.pin_existing_page(frame_id)
+            }
             None => {
                 unlock(inner);
 
                 let mut inner = self.lock.write().unwrap();
+
+                // Somebody else may have fetched the same page before we got the writer lock,
+                // in which case we're done.
+                if let Some(&frame_id) = inner.page_table.get(&page_id) {
+                    unlock(inner);
+                    return self.pin_existing_page(frame_id);
+                }
+
                 let frame_id = self.get_free_frame(inner.deref_mut()).await?;
                 let page_ = &self.frames[frame_id];
 
@@ -81,17 +117,37 @@ impl BufferPool {
 
                 inner.page_table.insert(page_id, frame_id);
 
+                inner.ref_flag.set(frame_id, true);
+
                 // I believe this is necessary to stretch the lifetime of the lock guard after we stop
                 // using `page`.
+                // TODO: actually check this - does Rust guarantee lifetime until end of block?
                 unlock(inner);
 
-                Ok(page)
+                Ok(PinnedPage { page: page })
             }
         }
     }
 
+    // May lock `inner` in write mode.
+    fn pin_existing_page<'a>(&'a self, frame_id: FrameId) -> io::Result<PinnedPage<'a>> {
+        let page = &self.frames[frame_id];
+        let old_pin_count = page.pin_count.fetch_add(1, Ordering::SeqCst);
+
+        if(old_pin_count == 0) {
+            let mut inner = self.lock.write().unwrap();
+
+            // Do we really need to take the writer lock here? Seems insane!
+            // TODO: Measure if we can get some improvement if we have a different lock, or use a
+            // lock-free bit vector
+            inner.ref_flag.set(frame_id, true);
+        }
+
+        Ok(PinnedPage { page: page })
+    }
+
     // TODO: decopypaste - get_page
-    pub async fn allocate_page(&self) -> io::Result<&Page> {
+    pub async fn allocate_page<'a>(&'a self) -> io::Result<PinnedPage<'a>> {
         let mut inner = self.lock.write().unwrap();
         let frame_id = self.get_free_frame(inner.deref_mut()).await?;
         let page_ = &self.frames[frame_id];
@@ -112,16 +168,46 @@ impl BufferPool {
         // using `page`.
         unlock(inner);
 
-        Ok(page)
+        Ok(PinnedPage { page: page })
     }
 
     async fn get_free_frame(&self, inner: &mut BufferPoolInner) -> io::Result<FrameId> {
         match inner.free_frames.pop() {
             Some(frame_id) => Ok(frame_id),
             None => {
+                let frame_id = self.find_victim(inner);
+
+                // SAFETY: We're sure nobody else is accessing this Page,
+                // because:
+                // - we observed its pin_count at 0, and
+                // - nobody could have increased it, because pin_count only increases while holding
+                // writer lock on `inner`.
+                let page = unsafe { &mut *(&self.frames[frame_id] as *const Page as *mut Page) };
                 panic!("No free frames");
             }
         }
+    }
+
+    fn find_victim(&self, inner: &mut BufferPoolInner) -> FrameId {
+        // Note [Two passes]
+        // In the first pass we may not get a page, since all unpinned pages will be also references.
+        // On the second pass we're guaranteed to get a page, since we unrefed them all in the first pass.
+        let mut i = 0;
+        while i < self.capacity * 2 {
+            if self.frames[inner.clock_hand].pin_count.load(Ordering::SeqCst) > 0 {
+                debug!("find_victim: skip {}", inner.clock_hand);
+                continue;
+            }
+            if inner.ref_flag.get(inner.clock_hand) {
+                debug!("find_victim: unref {}", inner.clock_hand);
+                inner.ref_flag.set(inner.clock_hand, false);
+            } else {
+                return inner.clock_hand;
+            }
+            i += 1;
+            inner.clock_hand = (inner.clock_hand + 1) % self.capacity;
+        }
+        panic!("No free frames");
     }
 }
 
