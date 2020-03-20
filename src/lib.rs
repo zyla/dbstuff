@@ -1,5 +1,3 @@
-#![feature(async_closure)]
-
 mod disk_manager;
 
 use tokio::fs;
@@ -143,7 +141,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_allocate_and_read_one_page() {
-        with_temp_db(async move |disk_manager| {
+        with_temp_db(|disk_manager| async {
             let mut buffer_pool = BufferPool::new(disk_manager, 1);
             let page = buffer_pool.allocate_page().await?;
             assert_eq!(page.id, PageId(0));
