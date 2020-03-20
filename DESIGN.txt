@@ -1,0 +1,10 @@
+When we get page from the buffer pool, we should get a shared PinnedPage.
+
+PinnedPage is like Rc, but a bit different - we don't immediately deallocate after pinCount reaches zero.
+So we must have some unsafety in the buffer pool manager.
+
+Let's first remove allocation concerns from this thing.
+-> Wait, what about evicting?
+  -> Let's try it.
+
+Only after we lock it, we get access to the contents.
