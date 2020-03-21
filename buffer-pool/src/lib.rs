@@ -1,6 +1,7 @@
 mod disk_manager;
 
 #[macro_use] extern crate bitvec;
+extern crate rand;
 
 use tokio::fs;
 use tokio::prelude::*;
@@ -12,6 +13,20 @@ use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use std::ops::{Deref, DerefMut};
 use std::future::Future;
 use bitvec::vec::BitVec;
+
+type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug)]
+enum Error {
+    IOError(io::Error),
+    NoFreeFrames,
+}
+
+impl From<io::Error> for Error {
+    fn from(err: io::Error) -> Self {
+        Error::IOError(err)
+    }
+}
 
 struct Page {
     id: PageId,
@@ -80,7 +95,7 @@ impl BufferPool {
         }
     }
 
-    pub async fn get_page<'a>(&'a self, page_id: PageId) -> io::Result<PinnedPage<'a>> {
+    pub async fn get_page<'a>(&'a self, page_id: PageId) -> Result<PinnedPage<'a>> {
         let inner = self.lock.read().await;
         match inner.page_table.get(&page_id) {
             Some(&frame_id) => {
@@ -130,7 +145,7 @@ impl BufferPool {
     }
 
     // May lock `inner` in write mode.
-    async fn pin_existing_page<'a>(&'a self, frame_id: FrameId) -> io::Result<PinnedPage<'a>> {
+    async fn pin_existing_page<'a>(&'a self, frame_id: FrameId) -> Result<PinnedPage<'a>> {
         let page = &self.frames[frame_id];
         let old_pin_count = page.pin_count.fetch_add(1, Ordering::SeqCst);
 
@@ -147,7 +162,7 @@ impl BufferPool {
     }
 
     // TODO: decopypaste - get_page
-    pub async fn allocate_page<'a>(&'a self) -> io::Result<PinnedPage<'a>> {
+    pub async fn allocate_page<'a>(&'a self) -> Result<PinnedPage<'a>> {
         let mut inner = self.lock.write().await;
         let frame_id = self.get_free_frame(inner.deref_mut()).await?;
         let page_ = &self.frames[frame_id];
@@ -177,11 +192,11 @@ impl BufferPool {
         Ok(PinnedPage { page: page })
     }
 
-    async fn get_free_frame(&self, inner: &mut BufferPoolInner) -> io::Result<FrameId> {
+    async fn get_free_frame(&self, inner: &mut BufferPoolInner) -> Result<FrameId> {
         match inner.free_frames.pop() {
             Some(frame_id) => Ok(frame_id),
             None => {
-                let frame_id = self.find_victim(inner);
+                let frame_id = self.find_victim(inner)?;
 
                 // SAFETY: We're sure nobody else is accessing this Page,
                 // because:
@@ -203,7 +218,7 @@ impl BufferPool {
         }
     }
 
-    fn find_victim(&self, inner: &mut BufferPoolInner) -> FrameId {
+    fn find_victim(&self, inner: &mut BufferPoolInner) -> Result<FrameId> {
         // Note [Two passes]
         // In the first pass we may not get a page, since all unpinned pages will be also references.
         // On the second pass we're guaranteed to get a page, since we unrefed them all in the first pass.
@@ -214,7 +229,7 @@ impl BufferPool {
                     println!("find_victim: unref {}", inner.clock_hand);
                     inner.ref_flag.set(inner.clock_hand, false);
                 } else {
-                    return inner.clock_hand;
+                    return Ok(inner.clock_hand);
                 }
             } else {
                 println!("find_victim: skip {}", inner.clock_hand);
@@ -222,19 +237,22 @@ impl BufferPool {
             i += 1;
             inner.clock_hand = (inner.clock_hand + 1) % self.capacity;
         }
-        panic!("No free frames");
+        
+        Err(Error::NoFreeFrames)
     }
 }
 
+// Helper functions for ending object lifetime earlier than the block ends.
 fn unlock<T>(_lock: T) {}
+fn drop<T>(_thing: T) {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    async fn with_temp_db<R, RF: Future<Output = io::Result<R>>, F: FnOnce(DiskManager) -> RF>(f: F) -> io::Result<R> {
-        let filename = "test.db";
-        let disk_manager = DiskManager::open(filename).await?;
+    async fn with_temp_db<R, RF: Future<Output = Result<R>>, F: FnOnce(DiskManager) -> RF>(f: F) -> Result<R> {
+        let filename = format!("test.db.{}", rand::random::<usize>());
+        let disk_manager = DiskManager::open(&filename).await?;
         let result = f(disk_manager).await;
         fs::remove_file(filename).await?;
         result
@@ -255,13 +273,15 @@ mod tests {
         }).await.unwrap()
     }
 
-    #[tokio::test(basic_scheduler)]
-    #[should_panic] // TODO: change the panic to an error Result
+    #[tokio::test]
     async fn test_allocate_more_pages_than_capacity() {
         with_temp_db(|disk_manager| async {
             let buffer_pool = BufferPool::new(disk_manager, 1);
-            let _page1 = buffer_pool.allocate_page().await?;
-            let _page2 = buffer_pool.allocate_page().await?;
+            let page1 = buffer_pool.allocate_page().await?;
+            assert!(match buffer_pool.allocate_page().await {
+                Err(Error::NoFreeFrames) => true,
+                _ => false
+            });
             Ok(())
         }).await.unwrap()
     }

@@ -9,3 +9,4 @@ edition = "2018"
 [dependencies]
 tokio = { path = "../libs/tokio/tokio", version = "0.2", features = ["full"] }
 bitvec = "0.17.3"
+rand = "0.7.3"
