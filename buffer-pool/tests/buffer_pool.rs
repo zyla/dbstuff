@@ -96,15 +96,15 @@ async fn random_multi_pin_test() {
         }
 
         let mut values = Box::new([0u8; num_pages]);
-        let mut pinned_pages: Vec<PinnedPage> = Vec::new();
+        let mut pinned_pages: Vec<(PageId, PinnedPage)> = Vec::new();
 
-        fn num_unique_pinned_pages(pinned_pages: &Vec<PinnedPage>) -> usize {
-            pinned_pages.iter().map(|page| page.id).collect::<HashSet<_>>().len()
+        fn num_unique_pinned_pages(pinned_pages: &Vec<(PageId, PinnedPage)>) -> usize {
+            pinned_pages.iter().map(|(id, _)| id).collect::<HashSet<_>>().len()
         }
 
         println!("Begin test");
 
-        for _ in 0..10000usize {
+        for _ in 0..100usize {
             let should_unpin =
                     if pinned_pages.len() == 0 {
                         false
@@ -114,38 +114,36 @@ async fn random_multi_pin_test() {
                         rng.gen()
                     };
 
-            let page =
+            let (page_id, page) =
                 if should_unpin {
                     let index = rng.gen_range(0, pinned_pages.len());
                     pinned_pages.remove(index)
                 } else {
                     let page_id = PageId(rng.gen_range(0, num_pages));
                     println!("Pinning {:?}", page_id);
-                    buffer_pool.get_page(page_id).await?
+                    (page_id, buffer_pool.get_page(page_id).await?)
                 };
 
-            println!("Reading {:?}", page.id);
+            println!("Reading {:?}", page_id);
             let value = page.data.read().await[0];
-            assert_eq!(value, values[page.id.0]);
+            assert_eq!(value, values[page_id.0]);
 
             if rng.gen() {
-                println!("Writing to {:?}", page.id);
-                values[page.id.0] = values[page.id.0].wrapping_add(1);
-                page.data.write().await[0] = values[page.id.0];
+                println!("Writing to {:?}", page_id);
+                values[page.id.0] = values[page_id.0].wrapping_add(1);
+                page.data.write().await[0] = values[page_id.0];
                 page.dirty();
             }
 
             if should_unpin {
-                println!("Unpinning {:?}", page.id);
+                println!("Unpinning {:?}", page_id);
                 drop(page);
             } else {
-                pinned_pages.push(page);
+                pinned_pages.push((page_id, page));
             }
 
-            println!("Pinned pages: {:?}", pinned_pages.iter().map(|p| (p.id, p.pin_count())).collect::<Vec<_>>());
+            println!("Pinned pages: {:?}", pinned_pages.iter().map(|(id, p)| (id, p.pin_count())).collect::<Vec<_>>());
         }
-
-        panic!("ok");
 
         Ok(())
     }).await.unwrap()
