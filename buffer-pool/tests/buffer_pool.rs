@@ -104,7 +104,7 @@ async fn random_multi_pin_test() {
 
         println!("Begin test");
 
-        for _ in 0..1000usize {
+        for _ in 0..10000usize {
             let should_unpin =
                     if pinned_pages.len() == 0 {
                         false
@@ -123,6 +123,17 @@ async fn random_multi_pin_test() {
                     println!("Pinning {:?}", page_id);
                     buffer_pool.get_page(page_id).await?
                 };
+
+            println!("Reading {:?}", page.id);
+            let value = page.data.read().await[0];
+            assert_eq!(value, values[page.id.0]);
+
+            if rng.gen() {
+                println!("Writing to {:?}", page.id);
+                values[page.id.0] = values[page.id.0].wrapping_add(1);
+                page.data.write().await[0] = values[page.id.0];
+                page.dirty();
+            }
 
             if should_unpin {
                 println!("Unpinning {:?}", page.id);

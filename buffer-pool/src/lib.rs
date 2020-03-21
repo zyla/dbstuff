@@ -231,6 +231,7 @@ impl BufferPool {
                 inner.page_table.remove(&page.id);
 
                 if *page.dirty.get_mut() {
+                    println!("Writing dirty page {:?}", page.id);
                     inner.disk_manager.write_page(page.id, page.data.get_mut()).await?;
                     *page.dirty.get_mut() = false;
                 }
