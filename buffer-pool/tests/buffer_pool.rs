@@ -13,7 +13,8 @@ use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use std::ops::{Deref, DerefMut};
 use std::future::Future;
 use bitvec::vec::BitVec;
-
+use rand::{SeedableRng, Rng};
+use std::collections::HashSet;
 
 async fn with_temp_db<R, RF: Future<Output = Result<R>>, F: FnOnce(DiskManager) -> RF>(f: F) -> Result<R> {
     let filename = format!("test.db.{}", rand::random::<usize>());
@@ -73,6 +74,63 @@ async fn test_write_and_read_evicted_page() {
 
         let page = buffer_pool.get_page(PageId(0)).await?;
         assert_eq!(page.data.read().await[0], 5);
+
+        Ok(())
+    }).await.unwrap()
+}
+
+
+#[tokio::test]
+async fn random_multi_pin_test() {
+    with_temp_db(|disk_manager| async {
+        const buffer_pool_size: usize = 10;
+        const num_pages: usize = 20;
+
+        let buffer_pool = BufferPool::new(disk_manager, buffer_pool_size);
+
+        let mut rng = rand::rngs::StdRng::from_seed([0; 32]);
+
+        for _ in 0..num_pages {
+            let page = buffer_pool.allocate_page().await?;
+            page.dirty();
+        }
+
+        let mut values = Box::new([0u8; num_pages]);
+        let mut pinned_pages: Vec<PinnedPage> = Vec::new();
+
+        fn num_unique_pinned_pages(pinned_pages: &Vec<PinnedPage>) -> usize {
+            pinned_pages.iter().map(|page| page.id).collect::<HashSet<_>>().len()
+        }
+
+        println!("Begin test");
+
+        for _ in 0..1000usize {
+            let should_unpin =
+                    if pinned_pages.len() == 0 {
+                        false
+                    } else if num_unique_pinned_pages(&pinned_pages) >= buffer_pool_size {
+                        true
+                    } else {
+                        rng.gen()
+                    };
+
+            let page =
+                if should_unpin {
+                    let index = rng.gen_range(0, pinned_pages.len());
+                    pinned_pages.remove(index)
+                } else {
+                    let page_id = PageId(rng.gen_range(0, num_pages));
+                    println!("Pinning {:?}", page_id);
+                    buffer_pool.get_page(page_id).await?
+                };
+
+            if should_unpin {
+                println!("Unpinning {:?}", page.id);
+                drop(page);
+            } else {
+                pinned_pages.push(page);
+            }
+        }
 
         Ok(())
     }).await.unwrap()
