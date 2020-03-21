@@ -1,0 +1,3 @@
+[submodule "libs/tokio"]
+	path = libs/tokio
+	url = https://github.com/zyla/tokio
