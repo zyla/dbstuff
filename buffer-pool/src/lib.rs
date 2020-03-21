@@ -116,18 +116,18 @@ impl BufferPool {
         let inner = self.lock.read().await;
         match inner.page_table.get(&page_id) {
             Some(&frame_id) => {
-                unlock(inner);
+                drop(inner);
                 self.pin_existing_page(frame_id).await
             }
             None => {
-                unlock(inner);
+                drop(inner);
 
                 let mut inner = self.lock.write().await;
 
                 // Somebody else may have fetched the same page before we got the writer lock,
                 // in which case we're done.
                 if let Some(&frame_id) = inner.page_table.get(&page_id) {
-                    unlock(inner);
+                    drop(inner);
                     return self.pin_existing_page(frame_id).await;
                 }
 
@@ -154,7 +154,7 @@ impl BufferPool {
                 // I believe this is necessary to stretch the lifetime of the lock guard after we stop
                 // using `page`.
                 // TODO: actually check this - does Rust guarantee lifetime until end of block?
-                unlock(inner);
+                drop(inner);
 
                 Ok(PinnedPage { page: page })
             }
@@ -209,7 +209,7 @@ impl BufferPool {
 
         // I believe this is necessary to stretch the lifetime of the lock guard after we stop
         // using `page`.
-        unlock(inner);
+        drop(inner);
 
         Ok(PinnedPage { page: page })
     }
@@ -267,10 +267,6 @@ impl BufferPool {
         Err(Error::NoFreeFrames)
     }
 }
-
-// Helper functions for ending object lifetime earlier than the block ends.
-fn unlock<T>(_lock: T) {}
-fn drop<T>(_thing: T) {}
 
 #[cfg(test)]
 mod tests {
