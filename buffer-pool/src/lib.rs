@@ -35,6 +35,14 @@ struct Page {
     data: RwLock<PageData>,
 }
 
+impl std::fmt::Debug for Page {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("Page")
+            .field("id", &self.id)
+            .finish()
+    }
+}
+
 type FrameId = usize;
 
 struct BufferPool {
@@ -51,6 +59,7 @@ struct BufferPoolInner {
     clock_hand: usize,
 }
 
+#[derive(Debug)]
 struct PinnedPage<'a> {
     page: &'a Page,
 }
@@ -278,10 +287,10 @@ mod tests {
         with_temp_db(|disk_manager| async {
             let buffer_pool = BufferPool::new(disk_manager, 1);
             let page1 = buffer_pool.allocate_page().await?;
-            assert!(match buffer_pool.allocate_page().await {
-                Err(Error::NoFreeFrames) => true,
-                _ => false
-            });
+            match buffer_pool.allocate_page().await {
+                Err(Error::NoFreeFrames) => {},
+                result => panic!("Expected Error::NoFreeFrames, got {:?}", result)
+            }
             Ok(())
         }).await.unwrap()
     }
