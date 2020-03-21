@@ -83,8 +83,8 @@ async fn test_write_and_read_evicted_page() {
 #[tokio::test]
 async fn random_multi_pin_test() {
     with_temp_db(|disk_manager| async {
-        const buffer_pool_size: usize = 10;
-        const num_pages: usize = 20;
+        const buffer_pool_size: usize = 2;
+        const num_pages: usize = 4;
 
         let buffer_pool = BufferPool::new(disk_manager, buffer_pool_size);
 
@@ -141,7 +141,11 @@ async fn random_multi_pin_test() {
             } else {
                 pinned_pages.push(page);
             }
+
+            println!("Pinned pages: {:?}", pinned_pages.iter().map(|p| (p.id, p.pin_count())).collect::<Vec<_>>());
         }
+
+        panic!("ok");
 
         Ok(())
     }).await.unwrap()
