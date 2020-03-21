@@ -254,7 +254,7 @@ impl BufferPool {
         // On the second pass we're guaranteed to get a page, since we unrefed them all in the first pass.
         let mut i = 0;
         while i < self.capacity * 2 {
-            if true { //self.frames[inner.clock_hand].pin_count.load(Ordering::SeqCst) == 0 {
+            if self.frames[inner.clock_hand].pin_count.load(Ordering::SeqCst) == 0 {
                 if inner.ref_flag.get(inner.clock_hand) == Some(&true) {
                     println!("find_victim: unref {}", inner.clock_hand);
                     inner.ref_flag.set(inner.clock_hand, false);
