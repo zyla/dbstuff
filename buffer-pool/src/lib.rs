@@ -1,6 +1,8 @@
 mod disk_manager;
 
 #[macro_use] extern crate bitvec;
+#[cfg(test)] #[macro_use] extern crate assert_matches;
+
 extern crate rand;
 
 use tokio::fs;
@@ -304,10 +306,7 @@ mod tests {
             let page0 = buffer_pool.allocate_page().await?;
 
             // Allocating second page should fail - we don't have free slots
-            match buffer_pool.allocate_page().await {
-                Err(Error::NoFreeFrames) => {},
-                result => panic!("Expected Error::NoFreeFrames, got {:?}", result)
-            }
+            assert_matches!(buffer_pool.allocate_page().await, Err(Error::NoFreeFrames));
 
             drop(page0);
 
