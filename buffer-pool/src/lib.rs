@@ -35,6 +35,12 @@ struct Page {
     data: RwLock<PageData>,
 }
 
+impl Page {
+    pub fn dirty(&self) {
+        self.dirty.store(true, Ordering::SeqCst);
+    }
+}
+
 impl std::fmt::Debug for Page {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.debug_struct("Page")
@@ -153,6 +159,11 @@ impl BufferPool {
         }
     }
 
+    pub async fn is_page_in_memory(&self, page_id: PageId) -> bool {
+        let inner = self.lock.read().await;
+        inner.page_table.contains_key(&page_id)
+    }
+
     // May lock `inner` in write mode.
     async fn pin_existing_page<'a>(&'a self, frame_id: FrameId) -> Result<PinnedPage<'a>> {
         let page = &self.frames[frame_id];
@@ -207,12 +218,16 @@ impl BufferPool {
             None => {
                 let frame_id = self.find_victim(inner)?;
 
+                println!("evict {}", frame_id);
+
                 // SAFETY: We're sure nobody else is accessing this Page,
                 // because:
                 // - we observed its pin_count at 0, and
                 // - nobody could have increased it, because pin_count only increases while holding
                 // writer lock on `inner`.
                 let page = unsafe { &mut *(&self.frames[frame_id] as *const Page as *mut Page) };
+
+                inner.page_table.remove(&page.id);
 
                 if *page.dirty.get_mut() {
                     inner.disk_manager.write_page(page.id, page.data.get_mut()).await?;
@@ -286,11 +301,41 @@ mod tests {
     async fn test_allocate_more_pages_than_capacity() {
         with_temp_db(|disk_manager| async {
             let buffer_pool = BufferPool::new(disk_manager, 1);
-            let page1 = buffer_pool.allocate_page().await?;
+            let page0 = buffer_pool.allocate_page().await?;
+
+            // Allocating second page should fail - we don't have free slots
             match buffer_pool.allocate_page().await {
                 Err(Error::NoFreeFrames) => {},
                 result => panic!("Expected Error::NoFreeFrames, got {:?}", result)
             }
+
+            drop(page0);
+
+            // Now it should succeed, as we have unpinned the previous page
+            buffer_pool.allocate_page().await?;
+
+            Ok(())
+        }).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_write_and_read_evicted_page() {
+        with_temp_db(|disk_manager| async {
+            let buffer_pool = BufferPool::new(disk_manager, 1);
+
+            let page = buffer_pool.allocate_page().await?;
+            assert_eq!(page.id, PageId(0));
+            page.data.write().await[0] = 5;
+            page.dirty();
+            drop(page);
+
+            // Allocate another page to evict the one we've written to
+            buffer_pool.allocate_page().await?;
+            assert!(!buffer_pool.is_page_in_memory(PageId(0)).await);
+
+            let page = buffer_pool.get_page(PageId(0)).await?;
+            assert_eq!(page.data.read().await[0], 5);
+
             Ok(())
         }).await.unwrap()
     }
