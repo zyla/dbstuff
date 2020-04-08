@@ -225,7 +225,7 @@ impl BufferPool {
             None => {
                 let frame_id = self.find_victim(inner)?;
 
-                println!("evict {}", frame_id);
+//                println!("evict {}", frame_id);
 
                 // SAFETY: We're sure nobody else is accessing this Page,
                 // because:
@@ -237,7 +237,7 @@ impl BufferPool {
                 inner.page_table.remove(&page.id);
 
                 if *page.dirty.get_mut() {
-                    println!("Writing dirty page {:?}", page.id);
+//                    println!("Writing dirty page {:?}", page.id);
                     inner.disk_manager.write_page(page.id, page.data.get_mut()).await?;
                     *page.dirty.get_mut() = false;
                 }
@@ -258,13 +258,13 @@ impl BufferPool {
         while i < self.capacity * 2 {
             if self.frames[inner.clock_hand].pin_count.load(Ordering::SeqCst) == 0 {
                 if inner.ref_flag.get(inner.clock_hand) == Some(&true) {
-                    println!("find_victim: unref {}", inner.clock_hand);
+//                    println!("find_victim: unref {}", inner.clock_hand);
                     inner.ref_flag.set(inner.clock_hand, false);
                 } else {
                     return Ok(inner.clock_hand);
                 }
             } else {
-                println!("find_victim: skip {}", inner.clock_hand);
+//                println!("find_victim: skip {}", inner.clock_hand);
             }
             i += 1;
             inner.clock_hand = (inner.clock_hand + 1) % self.capacity;
