@@ -135,12 +135,11 @@ impl BufferPool {
                 }
 
                 let frame_id = self.get_free_frame(inner.deref_mut()).await?;
-                let page_ = &self.frames[frame_id];
 
                 // SAFETY: We're sure nobody else is accessing this Page,
                 // because we just pulled it off the free list, and we're still holding the page
                 // table lock.
-                let page = unsafe { &mut *(page_ as *const Page as *mut Page) };
+                let page = unsafe { &mut *(&self.frames[frame_id] as *const Page as *mut Page) };
                 page.id = page_id;
                 *page.dirty.get_mut() = false;
                 *page.pin_count.get_mut() = 1;
@@ -190,14 +189,13 @@ impl BufferPool {
     pub async fn allocate_page<'a>(&'a self) -> Result<PinnedPage<'a>> {
         let mut inner = self.lock.write().await;
         let frame_id = self.get_free_frame(inner.deref_mut()).await?;
-        let page_ = &self.frames[frame_id];
 
         let page_id = inner.disk_manager.allocate_page().await?;
 
         // SAFETY: We're sure nobody else is accessing this Page,
         // because we just pulled it off the free list, and we're still holding the page
         // table lock.
-        let page = unsafe { &mut *(page_ as *const Page as *mut Page) };
+        let page = unsafe { &mut *(&self.frames[frame_id] as *const Page as *mut Page) };
         page.id = page_id;
         *page.dirty.get_mut() = false;
         *page.pin_count.get_mut() = 1;
