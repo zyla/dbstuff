@@ -139,7 +139,7 @@ impl BufferPool {
                 // SAFETY: We're sure nobody else is accessing this Page,
                 // because we just pulled it off the free list, and we're still holding the page
                 // table lock.
-                let page = unsafe { &mut *(&self.frames[frame_id] as *const Page as *mut Page) };
+                let page = unsafe { self.get_mut_page(frame_id) };
                 page.id = page_id;
                 *page.dirty.get_mut() = false;
                 *page.pin_count.get_mut() = 1;
@@ -161,6 +161,10 @@ impl BufferPool {
                 Ok(PinnedPage { page: page })
             }
         }
+    }
+    
+    unsafe fn get_mut_page(&self, frame_id: FrameId) -> &mut Page {
+        &mut *(&self.frames[frame_id] as *const Page as *mut Page)
     }
 
     pub async fn is_page_in_memory(&self, page_id: PageId) -> bool {
@@ -195,7 +199,7 @@ impl BufferPool {
         // SAFETY: We're sure nobody else is accessing this Page,
         // because we just pulled it off the free list, and we're still holding the page
         // table lock.
-        let page = unsafe { &mut *(&self.frames[frame_id] as *const Page as *mut Page) };
+        let page = unsafe { self.get_mut_page(frame_id) };
         page.id = page_id;
         *page.dirty.get_mut() = false;
         *page.pin_count.get_mut() = 1;
@@ -228,7 +232,7 @@ impl BufferPool {
                 // - we observed its pin_count at 0, and
                 // - nobody could have increased it, because pin_count only increases while holding
                 // writer lock on `inner`.
-                let page = unsafe { &mut *(&self.frames[frame_id] as *const Page as *mut Page) };
+                let page = unsafe { self.get_mut_page(frame_id) };
 
                 inner.page_table.remove(&page.id);
 

@@ -15,6 +15,7 @@ use std::future::Future;
 use bitvec::vec::BitVec;
 use rand::{SeedableRng, Rng};
 use std::collections::HashSet;
+use std::sync::Arc;
 
 async fn with_temp_db<R, RF: Future<Output = Result<R>>, F: FnOnce(DiskManager) -> RF>(f: F) -> Result<R> {
     let filename = format!("test.db.{}", rand::random::<usize>());
@@ -144,6 +145,101 @@ async fn random_multi_pin_test() {
 
             println!("Pinned pages: {:?}", pinned_pages.iter().map(|(id, p)| (id, p.pin_count())).collect::<Vec<_>>());
         }
+
+        Ok(())
+    }).await.unwrap()
+}
+
+#[tokio::test(core_threads=6)]
+async fn random_multithreaded_multi_pin_test() {
+    with_temp_db(|disk_manager| async {
+        const num_threads: usize = 6;
+        const max_pins_per_thread: usize = 3;
+        const buffer_pool_size: usize = num_threads * max_pins_per_thread;
+        const num_pages: usize = max_pins_per_thread * 2;
+
+        let buffer_pool = BufferPool::new(disk_manager, buffer_pool_size);
+
+        for _ in 0..num_pages {
+            let page = buffer_pool.allocate_page().await?;
+            page.dirty();
+        }
+
+        let pool_arc = Arc::new(buffer_pool);
+
+        let mut threads = vec![];
+
+        for thread_id in 0..num_threads {
+            let buffer_pool = pool_arc.clone();
+            let thread_id = thread_id.clone();
+
+            threads.push(tokio::spawn(async move {
+                let mut rng = rand::rngs::StdRng::from_seed([thread_id as u8; 32]);
+
+                let mut values = Box::new([0u8; num_pages]);
+                let mut pinned_pages: Vec<(PageId, PinnedPage)> = Vec::new();
+
+                fn num_unique_pinned_pages(pinned_pages: &Vec<(PageId, PinnedPage)>) -> usize {
+                    pinned_pages.iter().map(|(id, _)| id).collect::<HashSet<_>>().len()
+                }
+
+                println!("t{} begin", thread_id);
+
+                for i in 0..100000usize {
+                    let should_unpin =
+                            if pinned_pages.len() == 0 {
+                                false
+                            } else if num_unique_pinned_pages(&pinned_pages) >= buffer_pool_size {
+                                true
+                            } else {
+                                rng.gen()
+                            };
+
+                    let (page_id, page) =
+                        if should_unpin {
+                            let index = rng.gen_range(0, pinned_pages.len());
+                            pinned_pages.remove(index)
+                        } else {
+                            let page_id = PageId(rng.gen_range(0, num_pages));
+//                            println!("Pinning {:?}", page_id);
+                            (page_id, buffer_pool.get_page(page_id).await?)
+                        };
+
+//                    println!("Reading {:?}", page_id);
+                    let value = page.data.read().await[thread_id];
+                    assert_eq!(value, values[page_id.0]);
+
+                    if rng.gen() {
+//                        println!("Writing to {:?}", page_id);
+                        values[page.id.0] = values[page_id.0].wrapping_add(1);
+                        page.data.write().await[thread_id] = values[page_id.0];
+                        page.dirty();
+                    }
+
+                    if should_unpin {
+//                        println!("Unpinning {:?}", page_id);
+                        drop(page);
+                    } else {
+                        pinned_pages.push((page_id, page));
+                    }
+
+                    if i % 100 == 0 {
+                        println!("t{} Pinned pages: {:?}", thread_id, pinned_pages.iter().map(|(id, p)| (id, p.pin_count())).collect::<Vec<_>>());
+                        tokio::task::yield_now().await;
+                    }
+                }
+
+                println!("t{} finished", thread_id);
+
+                Ok(()) as Result<()>
+            }));
+        }
+
+        for join_handle in threads.into_iter() {
+            join_handle.await.unwrap();
+        }
+
+        println!("Finished");
 
         Ok(())
     }).await.unwrap()
