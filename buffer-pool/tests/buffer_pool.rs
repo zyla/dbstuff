@@ -325,7 +325,7 @@ async fn random_multithreaded_single_pin_per_thread_test() {
                     if i % 1000 == 0 {
                         println!("t{} pinned pages: {:?}", thread_id, pinned_pages.iter()
                                  .enumerate()
-                                 .filter_map(|(id, op)| op.as_ref().map(|p| (id, p.pin_count())))
+                                 .filter_map(|(id, op)| op.as_ref().map(|p| (id, p.id, p.pin_count())))
                                              .collect::<Vec<_>>());
 //                        tokio::task::yield_now().await;
                     }
