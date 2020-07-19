@@ -3,6 +3,6 @@
 Random experiments in the area of databases. Written in Rust, using async.
 
 Components
-- Implemented: Page cache / buffer pool ([](./buffer-pool))
+- Implemented: Page cache / buffer pool ([buffer-pool](./buffer-pool))
   - Naive when it comes to locking. In particular, keeps writer lock while doing IO on pages, which seems really really bad.
-- Work in progress: Table heap ([](./table))
+- Work in progress: Table heap ([table](./table))
