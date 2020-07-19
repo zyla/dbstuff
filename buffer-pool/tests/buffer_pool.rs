@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 macro_rules! debug {
-    ($($arg:tt)*) => ();
+    ($($arg:tt)*) => {};
 }
 
 async fn with_temp_db<R, RF: Future<Output = Result<R>>, F: FnOnce(DiskManager) -> RF>(
