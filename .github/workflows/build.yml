@@ -12,9 +12,10 @@ jobs:
     name: fmt
     runs-on: ubuntu-latest
     env:
-      CRATE: buffer_pool
+      CRATE: buffer-pool
     steps:
       - uses: actions/checkout@v2
+      - run: git submodule update --init
       - name: Install stuff
         run: rustup component add rustfmt clippy
       - name: Run cargo clippy
@@ -26,9 +27,10 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     env:
-      CRATE: buffer_pool
+      CRATE: buffer-pool
     steps:
       - uses: actions/checkout@v2
+      - run: git submodule update --init
 
       # Ensure that all components all compilable.
       - name: Run cargo check for all targets
@@ -44,6 +46,7 @@ jobs:
       CRATE: table
     steps:
       - uses: actions/checkout@v2
+      - run: git submodule update --init
       - name: Install stuff
         run: rustup component add rustfmt clippy
       - name: Run cargo clippy
@@ -58,6 +61,7 @@ jobs:
       CRATE: table
     steps:
       - uses: actions/checkout@v2
+      - run: git submodule update --init
 
       # Ensure that all components all compilable.
       - name: Run cargo check for all targets
