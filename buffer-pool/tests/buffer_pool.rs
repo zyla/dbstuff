@@ -329,6 +329,7 @@ async fn random_multithreaded_single_pin_per_thread_test() {
                         }
                         Some(page) => (page, true),
                     };
+                    assert_eq!(page.id, page_id);
 
                     //                    debug!("Reading {:?}", page_id);
                     let value = page.data.read().await[thread_id];
