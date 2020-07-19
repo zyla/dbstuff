@@ -1,20 +1,121 @@
-use buffer_pool::disk_manager::PageData;
+use buffer_pool::disk_manager::{PageData, PAGE_SIZE};
 use std::ops::{Deref, DerefMut};
 
 pub struct TablePage<T> {
     data: T,
 }
 
-impl<T: Deref<Target=PageData>> TablePage<T> {
-    /// Unsafe: It is the caller's responsibility to ensure that `data` is formatted like a table
-    /// page.
-    pub unsafe fn from_existing(data: T) -> Self {
+//
+// Slotted page format:
+// ---------------------------------------------------------
+// | HEADER | ... FREE SPACE ... | ... INSERTED TUPLES ... |
+// ---------------------------------------------------------
+//                               ^
+//                               free space pointer
+//
+// Header format (size in bytes):
+// ----------------------------------------------------------------------------
+// | PageId (4)| LSN (4)| PrevPageId (4)| NextPageId (4)| FreeSpacePointer(4) |
+// ----------------------------------------------------------------------------
+// ----------------------------------------------------------------
+// | TupleCount (4) | Tuple_1 offset (4) | Tuple_1 size (4) | ... |
+// ----------------------------------------------------------------
+//
+
+const OFFSET_FREE_SPACE_PTR: usize = 0x10;
+const OFFSET_TUPLE_COUNT: usize = 0x14;
+const OFFSET_TUPLE_DESCRIPTORS: usize = 0x18;
+const SIZE_TUPLE_DESCRIPTOR: usize = 8;
+
+// offsets inside tuple descriptor
+const OFFSET_TUPLE_OFFSET: usize = 0;
+const OFFSET_TUPLE_SIZE: usize = 4;
+
+#[derive(PartialEq, Eq, Debug)]
+pub enum Error {
+    PageFull,
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+impl<T: Deref<Target = PageData>> TablePage<T> {
+    pub fn from_existing(data: T) -> Self {
         TablePage { data }
+    }
+
+    pub fn free_space(&self) -> usize {
+        self.get_free_space_ptr()
+            - OFFSET_TUPLE_DESCRIPTORS
+            - self.get_tuple_count() * SIZE_TUPLE_DESCRIPTOR
+    }
+
+    fn get_free_space_ptr(&self) -> usize {
+        self.read_u32(OFFSET_FREE_SPACE_PTR) as usize
+    }
+
+    fn get_tuple_count(&self) -> usize {
+        self.read_u32(OFFSET_TUPLE_COUNT) as usize
+    }
+
+    #[allow(clippy::cast_ptr_alignment)]
+    fn read_u32(&self, offset: usize) -> u32 {
+        let ptr = self.data[offset..].as_ptr() as *const u32;
+        unsafe { ptr.read_unaligned() }
     }
 }
 
-impl<T: DerefMut<Target=PageData>> TablePage<T> {
+impl<T: DerefMut<Target = PageData>> TablePage<T> {
     /// Initialize a new page in the given storage.
     pub fn new(data: T) -> Self {
+        let mut page = TablePage { data };
+        page.set_free_space_ptr(PAGE_SIZE as u32);
+        page.set_tuple_count(0);
+        page
+    }
+
+    pub fn alloc_tuple(&mut self, size: usize) -> Result<&mut [u8]> {
+        if self.free_space() < size + SIZE_TUPLE_DESCRIPTOR {
+            return Err(Error::PageFull);
+        }
+        let end = self.get_free_space_ptr();
+        let start = end - size;
+        let index = self.get_tuple_count();
+        self.set_free_space_ptr(start as u32);
+        self.set_tuple_count((index + 1) as u32);
+        self.set_tuple_descriptor(index, start as u32, (end - start) as u32);
+        Ok(&mut self.data[start..end])
+    }
+
+    pub fn insert_tuple<'a>(&mut self, tuple: &'a [u8]) -> Result<()> {
+        let new_tuple = self.alloc_tuple(tuple.len())?;
+        new_tuple.copy_from_slice(tuple);
+        Ok(())
+    }
+
+    fn set_free_space_ptr(&mut self, value: u32) {
+        self.write_u32(OFFSET_FREE_SPACE_PTR, value);
+    }
+
+    fn set_tuple_count(&mut self, value: u32) {
+        self.write_u32(OFFSET_TUPLE_COUNT, value);
+    }
+
+    fn set_tuple_descriptor(&mut self, index: usize, offset: u32, size: u32) {
+        self.write_u32(
+            OFFSET_TUPLE_DESCRIPTORS + SIZE_TUPLE_DESCRIPTOR * index + OFFSET_TUPLE_OFFSET,
+            offset,
+        );
+        self.write_u32(
+            OFFSET_TUPLE_DESCRIPTORS + SIZE_TUPLE_DESCRIPTOR * index + OFFSET_TUPLE_SIZE,
+            size,
+        );
+    }
+
+    #[allow(clippy::cast_ptr_alignment)]
+    fn write_u32(&mut self, offset: usize, value: u32) {
+        let ptr = self.data[offset..].as_mut_ptr() as *mut u32;
+        unsafe {
+            ptr.write_unaligned(value);
+        }
     }
 }

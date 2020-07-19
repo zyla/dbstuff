@@ -11,4 +11,5 @@ tokio = { path = "../libs/tokio/tokio", version = "0.2", features = ["full"] }
 buffer_pool = { path = "../buffer-pool" }
 
 [dev-dependencies]
-assert_matches = "1.3.0"
+insta = "0.16.1"
+pretty-hex = "0.1.1"
