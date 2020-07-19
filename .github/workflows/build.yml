@@ -9,7 +9,7 @@ env:
 
 jobs:
   lint-buffer-pool:
-    name: fmt
+    name: fmt-buffer-pool
     runs-on: ubuntu-latest
     env:
       CRATE: buffer-pool
@@ -24,7 +24,7 @@ jobs:
         run: cd $CRATE && cargo fmt --all -- --check
 
   test-buffer-pool:
-    name: test
+    name: test-buffer-pool
     runs-on: ubuntu-latest
     env:
       CRATE: buffer-pool
@@ -40,7 +40,7 @@ jobs:
         run: cd $CRATE && cargo test --color always --all
 
   lint-table:
-    name: fmt
+    name: fmt-table
     runs-on: ubuntu-latest
     env:
       CRATE: table
@@ -55,7 +55,7 @@ jobs:
         run: cd $CRATE && cargo fmt --all -- --check
 
   test-table:
-    name: test
+    name: test-table
     runs-on: ubuntu-latest
     env:
       CRATE: table
