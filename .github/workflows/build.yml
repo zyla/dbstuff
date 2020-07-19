@@ -8,21 +8,6 @@ env:
 # Taken from https://github.com/swc-project/swc/blob/master/.github/workflows/cargo.yml
 
 jobs:
-  lint-buffer-pool:
-    name: fmt-buffer-pool
-    runs-on: ubuntu-latest
-    env:
-      CRATE: buffer-pool
-    steps:
-      - uses: actions/checkout@v2
-      - run: git submodule update --init
-      - name: Install stuff
-        run: rustup component add rustfmt clippy
-      - name: Run cargo clippy
-        run: cd $CRATE && cargo clippy -- -Dwarnings
-      - name: Run cargo fmt
-        run: cd $CRATE && cargo fmt --all -- --check
-
   test-buffer-pool:
     name: test-buffer-pool
     runs-on: ubuntu-latest
@@ -38,21 +23,6 @@ jobs:
 
       - name: Run cargo test
         run: cd $CRATE && cargo test --color always --all
-
-  lint-table:
-    name: fmt-table
-    runs-on: ubuntu-latest
-    env:
-      CRATE: table
-    steps:
-      - uses: actions/checkout@v2
-      - run: git submodule update --init
-      - name: Install stuff
-        run: rustup component add rustfmt clippy
-      - name: Run cargo clippy
-        run: cd $CRATE && cargo clippy -- -Dwarnings
-      - name: Run cargo fmt
-        run: cd $CRATE && cargo fmt --all -- --check
 
   test-table:
     name: test-table
@@ -70,21 +40,6 @@ jobs:
       - name: Run cargo test
         run: cd $CRATE && cargo test --color always --all
 
-  lint-db:
-    name: fmt-db
-    runs-on: ubuntu-latest
-    env:
-      CRATE: db
-    steps:
-      - uses: actions/checkout@v2
-      - run: git submodule update --init
-      - name: Install stuff
-        run: rustup component add rustfmt clippy
-      - name: Run cargo clippy
-        run: cd $CRATE && cargo clippy -- -Dwarnings
-      - name: Run cargo fmt
-        run: cd $CRATE && cargo fmt --all -- --check
-
   test-db:
     name: test-db
     runs-on: ubuntu-latest
@@ -100,3 +55,18 @@ jobs:
 
       - name: Run cargo test
         run: cd $CRATE && cargo test --color always --all
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    env:
+      CRATE: db
+    steps:
+      - uses: actions/checkout@v2
+      - run: git submodule update --init
+      - name: Install stuff
+        run: rustup component add rustfmt clippy
+      - name: Run cargo clippy
+        run: cd $CRATE && cargo clippy -- -Dwarnings
+      - name: Run cargo fmt
+        run: cd $CRATE && cargo fmt --all -- --check
