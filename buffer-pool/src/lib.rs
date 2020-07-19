@@ -1,18 +1,18 @@
 pub mod disk_manager;
 
-#[macro_use] extern crate bitvec;
+#[macro_use]
+extern crate bitvec;
 
 extern crate rand;
 
-use tokio::fs;
 use tokio::prelude::*;
-use std::path::Path;
-use std::collections::{HashMap};
-use tokio::sync::{RwLock};
+
 use crate::disk_manager::*;
-use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
+use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
-use std::future::Future;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use tokio::sync::RwLock;
+
 use bitvec::vec::BitVec;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -48,9 +48,7 @@ impl Page {
 
 impl std::fmt::Debug for Page {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        f.debug_struct("Page")
-            .field("id", &self.id)
-            .finish()
+        f.debug_struct("Page").field("id", &self.id).finish()
     }
 }
 
@@ -98,24 +96,24 @@ impl BufferPool {
                 id: PageId(std::usize::MAX),
                 dirty: AtomicBool::default(),
                 pin_count: AtomicUsize::default(),
-                data: RwLock::new([0; PAGE_SIZE])
+                data: RwLock::new([0; PAGE_SIZE]),
             });
             free_frames.push(i);
         }
         BufferPool {
-            capacity: capacity,
+            capacity,
             frames: frames.into_boxed_slice(),
             lock: RwLock::new(BufferPoolInner {
-                disk_manager: disk_manager,
+                disk_manager,
                 page_table: HashMap::with_capacity(capacity),
-                free_frames: free_frames,
+                free_frames,
                 ref_flag: bitvec![0; capacity],
                 clock_hand: 0,
             }),
         }
     }
 
-    pub async fn get_page<'a>(&'a self, page_id: PageId) -> Result<PinnedPage<'a>> {
+    pub async fn get_page(&self, page_id: PageId) -> Result<PinnedPage<'_>> {
         let inner = self.lock.read().await;
         match inner.page_table.get(&page_id) {
             Some(&frame_id) => {
@@ -147,7 +145,10 @@ impl BufferPool {
                 // TODO: Should we still hold the lock while we're doing IO?
                 // A: Yes, but maybe a different one? (we shouldn't block reading existing tables,
                 // but we don't want to read the same page twice)
-                inner.disk_manager.read_page(page_id, page.data.get_mut()).await?;
+                inner
+                    .disk_manager
+                    .read_page(page_id, page.data.get_mut())
+                    .await?;
 
                 inner.page_table.insert(page_id, frame_id);
 
@@ -158,11 +159,14 @@ impl BufferPool {
                 // TODO: actually check this - does Rust guarantee lifetime until end of block?
                 drop(inner);
 
-                Ok(PinnedPage { page: page })
+                Ok(PinnedPage { page })
             }
         }
     }
-    
+
+    // TODO: replace this with UnsafeCell (clippy says this is undefined behavior)
+    #[allow(clippy::mut_from_ref)]
+    #[allow(clippy::cast_ref_to_mut)]
     unsafe fn get_mut_page(&self, frame_id: FrameId) -> &mut Page {
         &mut *(&self.frames[frame_id] as *const Page as *mut Page)
     }
@@ -173,7 +177,7 @@ impl BufferPool {
     }
 
     // May lock `inner` in write mode.
-    async fn pin_existing_page<'a>(&'a self, frame_id: FrameId) -> Result<PinnedPage<'a>> {
+    async fn pin_existing_page(&self, frame_id: FrameId) -> Result<PinnedPage<'_>> {
         let page = &self.frames[frame_id];
         let old_pin_count = page.pin_count.fetch_add(1, Ordering::SeqCst);
 
@@ -186,11 +190,11 @@ impl BufferPool {
             inner.ref_flag.set(frame_id, true);
         }
 
-        Ok(PinnedPage { page: page })
+        Ok(PinnedPage { page })
     }
 
     // TODO: decopypaste - get_page
-    pub async fn allocate_page<'a>(&'a self) -> Result<PinnedPage<'a>> {
+    pub async fn allocate_page(&self) -> Result<PinnedPage<'_>> {
         let mut inner = self.lock.write().await;
         let frame_id = self.get_free_frame(inner.deref_mut()).await?;
 
@@ -203,7 +207,7 @@ impl BufferPool {
         page.id = page_id;
         *page.dirty.get_mut() = false;
         *page.pin_count.get_mut() = 1;
-        
+
         // Zero-fill the newly created page
         let data = page.data.get_mut();
         for i in data.iter_mut() {
@@ -216,7 +220,7 @@ impl BufferPool {
         // using `page`.
         drop(inner);
 
-        Ok(PinnedPage { page: page })
+        Ok(PinnedPage { page })
     }
 
     async fn get_free_frame(&self, inner: &mut BufferPoolInner) -> Result<FrameId> {
@@ -225,7 +229,7 @@ impl BufferPool {
             None => {
                 let frame_id = self.find_victim(inner)?;
 
-//                println!("evict {}", frame_id);
+                //                println!("evict {}", frame_id);
 
                 // SAFETY: We're sure nobody else is accessing this Page,
                 // because:
@@ -237,8 +241,11 @@ impl BufferPool {
                 inner.page_table.remove(&page.id);
 
                 if *page.dirty.get_mut() {
-//                    println!("Writing dirty page {:?}", page.id);
-                    inner.disk_manager.write_page(page.id, page.data.get_mut()).await?;
+                    //                    println!("Writing dirty page {:?}", page.id);
+                    inner
+                        .disk_manager
+                        .write_page(page.id, page.data.get_mut())
+                        .await?;
                     *page.dirty.get_mut() = false;
                 }
 
@@ -256,20 +263,24 @@ impl BufferPool {
         // On the second pass we're guaranteed to get a page, since we unrefed them all in the first pass.
         let mut i = 0;
         while i < self.capacity * 2 {
-            if self.frames[inner.clock_hand].pin_count.load(Ordering::SeqCst) == 0 {
+            if self.frames[inner.clock_hand]
+                .pin_count
+                .load(Ordering::SeqCst)
+                == 0
+            {
                 if inner.ref_flag.get(inner.clock_hand) == Some(&true) {
-//                    println!("find_victim: unref {}", inner.clock_hand);
+                    //                    println!("find_victim: unref {}", inner.clock_hand);
                     inner.ref_flag.set(inner.clock_hand, false);
                 } else {
                     return Ok(inner.clock_hand);
                 }
             } else {
-//                println!("find_victim: skip {}", inner.clock_hand);
+                //                println!("find_victim: skip {}", inner.clock_hand);
             }
             i += 1;
             inner.clock_hand = (inner.clock_hand + 1) % self.capacity;
         }
-        
+
         Err(Error::NoFreeFrames)
     }
 }
