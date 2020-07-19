@@ -1,0 +1,11 @@
+[package]
+name = "db"
+version = "0.1.0"
+authors = ["Maciej Bielecki"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+buffer_pool = { path = "../buffer-pool" }
+table = { path = "../table" }

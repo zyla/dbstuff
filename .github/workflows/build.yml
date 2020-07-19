@@ -69,3 +69,34 @@ jobs:
 
       - name: Run cargo test
         run: cd $CRATE && cargo test --color always --all
+
+  lint-db:
+    name: fmt-db
+    runs-on: ubuntu-latest
+    env:
+      CRATE: db
+    steps:
+      - uses: actions/checkout@v2
+      - run: git submodule update --init
+      - name: Install stuff
+        run: rustup component add rustfmt clippy
+      - name: Run cargo clippy
+        run: cd $CRATE && cargo clippy -- -Dwarnings
+      - name: Run cargo fmt
+        run: cd $CRATE && cargo fmt --all -- --check
+
+  test-db:
+    name: test-db
+    runs-on: ubuntu-latest
+    env:
+      CRATE: db
+    steps:
+      - uses: actions/checkout@v2
+      - run: git submodule update --init
+
+      # Ensure that all components all compilable.
+      - name: Run cargo check for all targets
+        run: cd $CRATE && cargo check --color always --all --all-targets
+
+      - name: Run cargo test
+        run: cd $CRATE && cargo test --color always --all
