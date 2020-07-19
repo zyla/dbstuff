@@ -1,0 +1,52 @@
+name: build
+
+on: [push, pull_request]
+
+env:
+  CI: "1"
+
+# Taken from https://github.com/swc-project/swc/blob/master/.github/workflows/cargo.yml
+
+_templates:
+  lint: &lint
+    name: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install stuff
+        run: rustup component add rustfmt clippy
+      - name: Run cargo clippy
+        run: cd $CRATE && cargo clippy -- -Dwarnings
+      - name: Run cargo fmt
+        run: cd $CRATE && cargo fmt --all -- --check
+
+  test: &test
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      # Ensure that all components all compilable.
+      - name: Run cargo check for all targets
+        run: cd $CRATE && cargo check --color always --all --all-targets
+
+      - name: Run cargo test
+        run: cd $CRATE && cargo test --color always --all
+
+jobs:
+  lint-buffer-pool:
+    <<: *lint
+    env:
+      CRATE: buffer_pool
+  test-buffer-pool:
+    <<: *test
+    env:
+      CRATE: buffer_pool
+  lint-table:
+    <<: *lint
+    env:
+      CRATE: table
+  test-table:
+    <<: *test
+    env:
+      CRATE: table
