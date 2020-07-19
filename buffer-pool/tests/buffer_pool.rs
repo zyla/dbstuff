@@ -14,6 +14,10 @@ use rand::{Rng, SeedableRng};
 use std::collections::HashSet;
 use std::sync::Arc;
 
+macro_rules! debug {
+    ($($arg:tt)*) => ();
+}
+
 async fn with_temp_db<R, RF: Future<Output = Result<R>>, F: FnOnce(DiskManager) -> RF>(
     f: F,
 ) -> Result<R> {
@@ -111,7 +115,7 @@ async fn random_multi_pin_test() {
                 .len()
         }
 
-        println!("Begin test");
+        debug!("Begin test");
 
         for _ in 0..100usize {
             let should_unpin = if pinned_pages.len() == 0 {
@@ -127,29 +131,29 @@ async fn random_multi_pin_test() {
                 pinned_pages.remove(index)
             } else {
                 let page_id = PageId(rng.gen_range(0, num_pages));
-                println!("Pinning {:?}", page_id);
+                debug!("Pinning {:?}", page_id);
                 (page_id, buffer_pool.get_page(page_id).await?)
             };
 
-            println!("Reading {:?}", page_id);
+            debug!("Reading {:?}", page_id);
             let value = page.data.read().await[0];
             assert_eq!(value, values[page_id.0]);
 
             if rng.gen() {
-                println!("Writing to {:?}", page_id);
+                debug!("Writing to {:?}", page_id);
                 values[page.id.0] = values[page_id.0].wrapping_add(1);
                 page.data.write().await[0] = values[page_id.0];
                 page.dirty();
             }
 
             if should_unpin {
-                println!("Unpinning {:?}", page_id);
+                debug!("Unpinning {:?}", page_id);
                 drop(page);
             } else {
                 pinned_pages.push((page_id, page));
             }
 
-            println!(
+            debug!(
                 "Pinned pages: {:?}",
                 pinned_pages
                     .iter()
@@ -201,7 +205,7 @@ async fn random_multithreaded_multi_pin_test() {
                         .len()
                 }
 
-                println!("t{} begin", thread_id);
+                debug!("t{} begin", thread_id);
 
                 for i in 0..100000usize {
                     let should_unpin = if pinned_pages.len() == 0 {
@@ -217,30 +221,30 @@ async fn random_multithreaded_multi_pin_test() {
                         pinned_pages.remove(index)
                     } else {
                         let page_id = PageId(rng.gen_range(0, num_pages));
-                        //                            println!("Pinning {:?}", page_id);
+                        //                            debug!("Pinning {:?}", page_id);
                         (page_id, buffer_pool.get_page(page_id).await?)
                     };
 
-                    //                    println!("Reading {:?}", page_id);
+                    //                    debug!("Reading {:?}", page_id);
                     let value = page.data.read().await[thread_id];
                     assert_eq!(value, values[page_id.0]);
 
                     if rng.gen() {
-                        //                        println!("Writing to {:?}", page_id);
+                        //                        debug!("Writing to {:?}", page_id);
                         values[page.id.0] = values[page_id.0].wrapping_add(1);
                         page.data.write().await[thread_id] = values[page_id.0];
                         page.dirty();
                     }
 
                     if should_unpin {
-                        //                        println!("Unpinning {:?}", page_id);
+                        //                        debug!("Unpinning {:?}", page_id);
                         drop(page);
                     } else {
                         pinned_pages.push((page_id, page));
                     }
 
                     if i % 100 == 0 {
-                        println!(
+                        debug!(
                             "t{} Pinned pages: {:?}",
                             thread_id,
                             pinned_pages
@@ -252,7 +256,7 @@ async fn random_multithreaded_multi_pin_test() {
                     }
                 }
 
-                println!("t{} finished", thread_id);
+                debug!("t{} finished", thread_id);
 
                 Ok(()) as Result<()>
             }));
@@ -262,7 +266,7 @@ async fn random_multithreaded_multi_pin_test() {
             join_handle.await.unwrap()?;
         }
 
-        println!("Finished");
+        debug!("Finished");
 
         Ok(())
     })
@@ -306,7 +310,7 @@ async fn random_multithreaded_single_pin_per_thread_test() {
                     pinned_pages.push(None);
                 }
 
-                println!("t{} begin", thread_id);
+                debug!("t{} begin", thread_id);
 
                 for i in 0..100000usize {
                     let page_id = PageId(rng.gen_range(0, pinned_pages.len()));
@@ -317,7 +321,7 @@ async fn random_multithreaded_single_pin_per_thread_test() {
                                 continue;
                             }
                             page_to_save = Some(buffer_pool.get_page(page_id).await?);
-                            //                                println!("Pinning {:?}", page_id);
+                            //                                debug!("Pinning {:?}", page_id);
                             match &page_to_save {
                                 Some(p) => (p, false),
                                 None => panic!("Expected Some"),
@@ -326,26 +330,26 @@ async fn random_multithreaded_single_pin_per_thread_test() {
                         Some(page) => (page, true),
                     };
 
-                    //                    println!("Reading {:?}", page_id);
+                    //                    debug!("Reading {:?}", page_id);
                     let value = page.data.read().await[thread_id];
                     assert_eq!(value, values[page_id.0]);
 
                     if rng.gen() {
-                        //                        println!("Writing to {:?}", page_id);
+                        //                        debug!("Writing to {:?}", page_id);
                         values[page_id.0] = values[page_id.0].wrapping_add(1);
                         page.data.write().await[thread_id] = values[page_id.0];
                         page.dirty();
                     }
 
                     if should_unpin {
-                        //                        println!("Unpinning {:?}", page_id);
+                        //                        debug!("Unpinning {:?}", page_id);
                         pinned_pages[page_id.0] = None;
                     } else {
                         pinned_pages[page_id.0] = page_to_save;
                     }
 
                     if i % 1000 == 0 {
-                        println!(
+                        debug!(
                             "t{} pinned pages: {:?}",
                             thread_id,
                             pinned_pages
@@ -362,7 +366,7 @@ async fn random_multithreaded_single_pin_per_thread_test() {
                     }
                 }
 
-                println!("t{} finished", thread_id);
+                debug!("t{} finished", thread_id);
 
                 Ok(()) as Result<()>
             }));
@@ -372,7 +376,7 @@ async fn random_multithreaded_single_pin_per_thread_test() {
             join_handle.await.unwrap()?;
         }
 
-        println!("Finished");
+        debug!("Finished");
 
         Ok(())
     })
