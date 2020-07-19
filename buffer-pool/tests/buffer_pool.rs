@@ -259,7 +259,7 @@ async fn random_multithreaded_multi_pin_test() {
         }
 
         for join_handle in threads.into_iter() {
-            join_handle.await.unwrap();
+            join_handle.await.unwrap()?;
         }
 
         println!("Finished");
