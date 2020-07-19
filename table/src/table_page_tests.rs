@@ -1,7 +1,7 @@
 use crate::hexdump::pretty_hex;
 use crate::table_page;
 use crate::table_page::TablePage;
-use buffer_pool::disk_manager::{PAGE_SIZE};
+use buffer_pool::disk_manager::PAGE_SIZE;
 
 #[test]
 fn test_new_page() {
