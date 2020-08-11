@@ -1,3 +1,5 @@
+use std::sync::mpsc;
+
 pub type ServerId = usize;
 
 pub struct Envelope<M> {
@@ -6,9 +8,7 @@ pub struct Envelope<M> {
     pub msg: M,
 }
 
-pub trait Endpoint<M>: Clone {
-    fn send(&self, to: ServerId, msg: &M);
-}
+pub type Endpoint<M> = mpsc::Sender<Envelope<M>>;
 
 pub trait Receiver<M> {
     fn receive(&self, envelope: Envelope<M>);

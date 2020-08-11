@@ -4,7 +4,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use crate::net::*;
+use crate::net;
+use net::*;
 
 pub type TxId = usize;
 
@@ -66,36 +67,45 @@ pub enum Reply {
     UnknownError,
 }
 
-#[derive(Clone)]
-pub struct Server<E>(Arc<ServerInner<E>>);
-
-impl<E> std::ops::Deref for Server<E> {
-    type Target = ServerInner<E>;
-
-    fn deref(&self) -> &Self::Target {
-        self.0.deref()
-    }
+struct Rpc {
+    me: ServerId,
+    endpoint: net::Endpoint<Message>,
+    next_request_id: AtomicUsize,
+    reply_waiters: Mutex<HashMap<usize, mpsc::SyncSender<(ServerId, Reply)>>>,
 }
 
-impl<E: Endpoint<Message>> Server<E> {
-    pub fn new(me: ServerId, endpoint: E, cfg: Configuration) -> Self {
-        Self(Arc::new(ServerInner {
+impl Rpc {
+    fn new(me: ServerId, endpoint: net::Endpoint<Message>) -> Self {
+        Rpc {
             me,
             endpoint,
-            cfg,
             next_request_id: AtomicUsize::new(0),
             reply_waiters: Default::default(),
-            transactions: Default::default(),
-            store: Default::default(),
-        }))
+        }
     }
 
-    fn send_request(&self, to: ServerId, request: Request) -> Reply {
-        let id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
-        let (tx, rx) = mpsc::sync_channel(1);
-        self.reply_waiters.lock().unwrap().insert(id, tx);
-        self.endpoint.send(to, &Message::Request(id, request));
-        rx.recv().unwrap().1
+    fn receive(
+        &self,
+        msg: Envelope<Message>,
+        process_request: impl FnOnce(ServerId, Request) -> Reply,
+    ) {
+        match msg.msg {
+            Message::Request(id, request) => {
+                let reply = process_request(msg.from, request);
+                self.endpoint
+                    .send(Envelope {
+                        from: self.me,
+                        to: msg.from,
+                        msg: Message::Reply(id, reply),
+                    })
+                    .unwrap();
+            }
+            Message::Reply(id, reply) => {
+                if let Some(waiter) = self.reply_waiters.lock().unwrap().remove(&id) {
+                    waiter.send((msg.from, reply)).unwrap();
+                }
+            }
+        }
     }
 
     fn send_to_all_other(
@@ -111,25 +121,44 @@ impl<E: Endpoint<Message>> Server<E> {
             let id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
             self.reply_waiters.lock().unwrap().insert(id, tx.clone());
             self.endpoint
-                .send(server, &Message::Request(id, request.clone()));
+                .send(Envelope {
+                    from: self.me,
+                    to: server,
+                    msg: Message::Request(id, request.clone()),
+                })
+                .unwrap();
         }
         rx
     }
 }
 
-impl<E: Endpoint<Message>> Receiver<Message> for Server<E> {
+#[derive(Clone)]
+pub struct Server(Arc<ServerInner>);
+
+impl std::ops::Deref for Server {
+    type Target = ServerInner;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.deref()
+    }
+}
+
+impl Server {
+    pub fn new(me: ServerId, endpoint: net::Endpoint<Message>, cfg: Configuration) -> Self {
+        Self(Arc::new(ServerInner {
+            me,
+            cfg,
+            rpc: Rpc::new(me, endpoint),
+            transactions: Default::default(),
+            store: Default::default(),
+        }))
+    }
+}
+
+impl Receiver<Message> for Server {
     fn receive(&self, msg: Envelope<Message>) {
-        match msg.msg {
-            Message::Request(id, request) => {
-                let reply = self.process_request(msg.from, request);
-                self.endpoint.send(msg.from, &Message::Reply(id, reply));
-            }
-            Message::Reply(id, reply) => {
-                if let Some(waiter) = self.reply_waiters.lock().unwrap().remove(&id) {
-                    waiter.send((msg.from, reply)).unwrap();
-                }
-            }
-        }
+        self.rpc
+            .receive(msg, |from, request| self.process_request(from, request));
     }
 }
 
@@ -166,24 +195,23 @@ impl Transaction {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Configuration {
-    txreg_servers: Vec<ServerId>,
-    range_servers: Vec<Vec<ServerId>>,
+    pub txreg_servers: Vec<ServerId>,
+    pub range_servers: Vec<Vec<ServerId>>,
 }
 
-pub struct ServerInner<E> {
+pub struct ServerInner {
     me: ServerId,
     cfg: Configuration,
-    endpoint: E,
-    next_request_id: AtomicUsize,
-    reply_waiters: Mutex<HashMap<usize, mpsc::SyncSender<(ServerId, Reply)>>>,
+    rpc: Rpc,
     transactions: Mutex<HashMap<TxId, Transaction>>,
     store: Mutex<HashMap<Key, HashMap<Version, Value>>>,
 }
 
 // process_request
 
-impl<E: Endpoint<Message>> Server<E> {
+impl Server {
     fn process_request(&self, _from: ServerId, request: Request) -> Reply {
         use Reply::*;
         use Request::*;
@@ -214,7 +242,7 @@ impl<E: Endpoint<Message>> Server<E> {
                 'retry: loop {
                     if tx.leader_id() == self.me {
                         tx.status = status;
-                        let rx = self.send_to_all_other(
+                        let rx = self.rpc.send_to_all_other(
                             &self.cfg.txreg_servers,
                             Finalize {
                                 txid,
@@ -254,6 +282,7 @@ impl<E: Endpoint<Message>> Server<E> {
                     } else {
                         let ballot = (tx.ballot.0 + 1, self.me);
                         let rx = self
+                            .rpc
                             .send_to_all_other(&self.cfg.txreg_servers, Prepare { txid, ballot });
 
                         let mut num_successes = 0;
