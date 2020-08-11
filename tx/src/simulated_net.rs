@@ -26,7 +26,7 @@ impl<M, S> Net<M, S> {
 
 impl<M: std::fmt::Debug + Send + Sync + 'static, S: Receiver<M> + Send + Sync + 'static> Net<M, S> {
     pub fn deliver(&self) {
-        while let Ok(envelope) = self.rx.recv_timeout(Duration::from_millis(100)) {
+        while let Ok(envelope) = self.rx.recv() {
             debug!("{:?}", envelope);
             let server = self.servers[envelope.to].clone();
             std::thread::spawn(move || {
