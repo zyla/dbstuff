@@ -59,6 +59,10 @@ pub enum Reply {
     // Reply to Finalize and RequestFinalize
     TransactionLeaderChanged { ballot: Ballot },
 
+    // Reply to Prepare
+    // Argument is the last proposed status
+    Promise(Option<(Ballot, TransactionStatus)>),
+
     UnknownError,
 }
 
@@ -130,10 +134,16 @@ impl<E: Endpoint<Message>> Receiver<Message> for Server<E> {
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Copy, Clone)]
-enum TransactionStatus {
+pub enum TransactionStatus {
     InProgress,
     Committed,
     Aborted,
+}
+
+impl TransactionStatus {
+    pub fn determined(self) -> bool {
+        self == Self::InProgress
+    }
 }
 
 struct Transaction {
@@ -201,47 +211,79 @@ impl<E: Endpoint<Message>> Server<E> {
                     }
                 }
 
-                if tx.leader_id() == self.me {
-                    tx.status = status;
-                    let rx = self.send_to_all_other(
-                        &self.cfg.txreg_servers,
-                        Finalize {
-                            txid,
-                            ballot: tx.ballot,
-                            status,
-                        },
-                    );
+                'retry: loop {
+                    if tx.leader_id() == self.me {
+                        tx.status = status;
+                        let rx = self.send_to_all_other(
+                            &self.cfg.txreg_servers,
+                            Finalize {
+                                txid,
+                                ballot: tx.ballot,
+                                status,
+                            },
+                        );
 
-                    let mut num_successes = 0;
-                    let num_successes_needed = self.cfg.txreg_servers.len() / 2; // majority minus me
+                        let mut num_successes = 0;
+                        let num_successes_needed = self.cfg.txreg_servers.len() / 2; // majority minus me
 
-                    while let Ok((_, reply)) = rx.recv() {
-                        match reply {
-                            Success => {
-                                num_successes += 1;
-                                if num_successes >= num_successes_needed {
+                        while let Ok((_, reply)) = rx.recv() {
+                            match reply {
+                                Success => {
+                                    num_successes += 1;
+                                    if num_successes >= num_successes_needed {
+                                        tx.status = status;
+                                        tx.finalized = true;
+                                        return Success;
+                                    }
+                                }
+                                AlreadyFinalized(status) => {
                                     tx.status = status;
                                     tx.finalized = true;
-                                    return Success;
+                                    return reply;
+                                }
+                                TransactionLeaderChanged { ballot } => {
+                                    tx.ballot = ballot;
+                                    return reply;
+                                }
+                                _ => {
+                                    error!("unknown reply to Finalize: {:?}", reply);
                                 }
                             }
-                            AlreadyFinalized(status) => {
-                                tx.status = status;
-                                tx.finalized = true;
-                                return reply;
-                            }
-                            TransactionLeaderChanged { ballot } => {
-                                tx.ballot = ballot;
-                                return reply;
-                            }
-                            _ => {
-                                error!("unknown reply to Finalize: {:?}", reply);
+                        }
+                        return UnknownError;
+                    } else {
+                        let ballot = (tx.ballot.0 + 1, self.me);
+                        let rx = self
+                            .send_to_all_other(&self.cfg.txreg_servers, Prepare { txid, ballot });
+
+                        let mut num_successes = 0;
+                        let num_successes_needed = self.cfg.txreg_servers.len() / 2; // majority minus me
+
+                        while let Ok((_, reply)) = rx.recv() {
+                            match reply {
+                                Success => {
+                                    num_successes += 1;
+                                    if num_successes >= num_successes_needed {
+                                        tx.ballot = ballot;
+                                        continue 'retry;
+                                    }
+                                }
+                                AlreadyFinalized(status) => {
+                                    tx.status = status;
+                                    tx.finalized = true;
+                                    return reply;
+                                }
+                                TransactionLeaderChanged { ballot } => {
+                                    tx.ballot = ballot;
+                                    return reply;
+                                }
+                                _ => {
+                                    error!("unknown reply to Prepare: {:?}", reply);
+                                }
                             }
                         }
+                        return UnknownError;
                     }
-                    return UnknownError;
-                } else {
-                    panic!("unimplemented: switching tx leader");
                 }
             }
             Prepare { txid, ballot } => {
@@ -259,8 +301,14 @@ impl<E: Endpoint<Message>> Server<E> {
                     return TransactionLeaderChanged { ballot: tx.ballot };
                 }
 
+                let previous = if tx.status.determined() {
+                    Some((tx.ballot, tx.status))
+                } else {
+                    None
+                };
+
                 tx.ballot = ballot;
-                Success
+                Promise(previous)
             }
             Finalize {
                 txid,
