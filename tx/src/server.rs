@@ -195,7 +195,7 @@ pub enum TransactionStatus {
 
 impl TransactionStatus {
     pub fn determined(self) -> bool {
-        self == Self::InProgress
+        self != Self::InProgress
     }
 }
 
