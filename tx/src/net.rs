@@ -2,6 +2,7 @@ use std::sync::mpsc;
 
 pub type ServerId = usize;
 
+#[derive(Debug)]
 pub struct Envelope<M> {
     pub from: ServerId,
     pub to: ServerId,

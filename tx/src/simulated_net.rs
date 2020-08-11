@@ -1,10 +1,10 @@
 use std::sync::{mpsc, Arc, Mutex};
+use std::time::Duration;
 
 use crate::{net, net::*};
 
 pub struct Net<M, S> {
-    pub(crate) servers: Vec<S>,
-    pub(crate) pending_messages: Vec<Envelope<M>>,
+    pub(crate) servers: Vec<Arc<S>>,
     pub(crate) rx: mpsc::Receiver<Envelope<M>>,
     pub(crate) tx: mpsc::Sender<Envelope<M>>,
 }
@@ -14,7 +14,6 @@ impl<M, S> Net<M, S> {
         let (tx, rx) = mpsc::channel();
         Net {
             servers: vec![],
-            pending_messages: vec![],
             rx,
             tx,
         }
@@ -25,10 +24,14 @@ impl<M, S> Net<M, S> {
     }
 }
 
-impl<M, S: Receiver<M>> Net<M, S> {
-    pub fn deliver(&mut self) {
-        for envelope in self.pending_messages.drain(0..) {
-            self.servers[envelope.to].receive(envelope);
+impl<M: std::fmt::Debug + Send + Sync + 'static, S: Receiver<M> + Send + Sync + 'static> Net<M, S> {
+    pub fn deliver(&self) {
+        while let Ok(envelope) = self.rx.recv_timeout(Duration::from_millis(100)) {
+            debug!("{:?}", envelope);
+            let server = self.servers[envelope.to].clone();
+            std::thread::spawn(move || {
+                server.receive(envelope);
+            });
         }
     }
 }

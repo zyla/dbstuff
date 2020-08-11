@@ -67,18 +67,18 @@ pub enum Reply {
     UnknownError,
 }
 
-struct Rpc {
+pub(crate) struct Rpc {
     me: ServerId,
-    endpoint: net::Endpoint<Message>,
+    endpoint: Mutex<net::Endpoint<Message>>,
     next_request_id: AtomicUsize,
     reply_waiters: Mutex<HashMap<usize, mpsc::SyncSender<(ServerId, Reply)>>>,
 }
 
 impl Rpc {
-    fn new(me: ServerId, endpoint: net::Endpoint<Message>) -> Self {
+    pub(crate) fn new(me: ServerId, endpoint: net::Endpoint<Message>) -> Self {
         Rpc {
             me,
-            endpoint,
+            endpoint: Mutex::new(endpoint),
             next_request_id: AtomicUsize::new(0),
             reply_waiters: Default::default(),
         }
@@ -93,6 +93,8 @@ impl Rpc {
             Message::Request(id, request) => {
                 let reply = process_request(msg.from, request);
                 self.endpoint
+                    .lock()
+                    .unwrap()
                     .send(Envelope {
                         from: self.me,
                         to: msg.from,
@@ -102,13 +104,33 @@ impl Rpc {
             }
             Message::Reply(id, reply) => {
                 if let Some(waiter) = self.reply_waiters.lock().unwrap().remove(&id) {
-                    waiter.send((msg.from, reply)).unwrap();
+                    let _ = waiter.send((msg.from, reply));
                 }
             }
         }
     }
 
-    fn send_to_all_other(
+    pub(crate) fn send_request(
+        &self,
+        to: ServerId,
+        request: Request,
+    ) -> mpsc::Receiver<(ServerId, Reply)> {
+        let (tx, rx) = mpsc::sync_channel(1);
+        let id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+        self.reply_waiters.lock().unwrap().insert(id, tx.clone());
+        self.endpoint
+            .lock()
+            .unwrap()
+            .send(Envelope {
+                from: self.me,
+                to,
+                msg: Message::Request(id, request.clone()),
+            })
+            .unwrap();
+        rx
+    }
+
+    pub(crate) fn send_to_all_other(
         &self,
         servers: &[ServerId],
         request: Request,
@@ -121,6 +143,8 @@ impl Rpc {
             let id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
             self.reply_waiters.lock().unwrap().insert(id, tx.clone());
             self.endpoint
+                .lock()
+                .unwrap()
                 .send(Envelope {
                     from: self.me,
                     to: server,
@@ -175,7 +199,8 @@ impl TransactionStatus {
     }
 }
 
-struct Transaction {
+#[derive(Debug)]
+pub struct Transaction {
     ballot: Ballot,
     status: TransactionStatus,
     finalized: bool,
@@ -202,10 +227,10 @@ pub struct Configuration {
 }
 
 pub struct ServerInner {
-    me: ServerId,
+    pub(crate) me: ServerId,
     cfg: Configuration,
-    rpc: Rpc,
-    transactions: Mutex<HashMap<TxId, Transaction>>,
+    pub(crate) rpc: Rpc,
+    pub(crate) transactions: Mutex<HashMap<TxId, Transaction>>,
     store: Mutex<HashMap<Key, HashMap<Version, Value>>>,
 }
 
@@ -239,15 +264,16 @@ impl Server {
                     }
                 }
 
+                let mut previous: Option<TransactionStatus> = None;
                 'retry: loop {
                     if tx.leader_id() == self.me {
-                        tx.status = status;
+                        tx.status = previous.unwrap_or(status);
                         let rx = self.rpc.send_to_all_other(
                             &self.cfg.txreg_servers,
                             Finalize {
                                 txid,
                                 ballot: tx.ballot,
-                                status,
+                                status: tx.status,
                             },
                         );
 
@@ -290,7 +316,8 @@ impl Server {
 
                         while let Ok((_, reply)) = rx.recv() {
                             match reply {
-                                Success => {
+                                Promise(previous_) => {
+                                    previous = previous_.map(|x| x.1);
                                     num_successes += 1;
                                     if num_successes >= num_successes_needed {
                                         tx.ballot = ballot;
