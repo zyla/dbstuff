@@ -280,6 +280,9 @@ impl Server {
                         let mut num_successes = 0;
                         let num_successes_needed = self.cfg.txreg_servers.len() / 2; // majority minus me
 
+                        // FIXME: We're holding the `transactions` lock while waiting for
+                        // replies! Guaranteed deadlock!!!!!
+
                         while let Ok((_, reply)) = rx.recv() {
                             match reply {
                                 Success => {
