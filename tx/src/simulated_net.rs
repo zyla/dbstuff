@@ -36,12 +36,12 @@ impl<M, S> Clone for Handle<M, S> {
     }
 }
 
-impl<M, S> Endpoint<M> for Handle<M, S> {
-    fn send(&self, to: ServerId, msg: M) {
+impl<M: Clone, S> Endpoint<M> for Handle<M, S> {
+    fn send(&self, to: ServerId, msg: &M) {
         self.net.lock().unwrap().pending_messages.push(Envelope {
             from: self.me,
             to,
-            msg,
+            msg: msg.clone(),
         });
     }
 }

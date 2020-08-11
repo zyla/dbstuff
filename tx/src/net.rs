@@ -7,7 +7,7 @@ pub struct Envelope<M> {
 }
 
 pub trait Endpoint<M>: Clone {
-    fn send(&self, to: ServerId, msg: M);
+    fn send(&self, to: ServerId, msg: &M);
 }
 
 pub trait Receiver<M> {
