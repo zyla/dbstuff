@@ -238,8 +238,6 @@ impl BufferPool {
                     page.dirty.store(false, Ordering::SeqCst);
                 }
 
-                page.pin_count.store(0, Ordering::SeqCst);
-
                 Ok(frame_id)
             }
         }
