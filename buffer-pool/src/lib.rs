@@ -8,10 +8,10 @@ extern crate rand;
 use tokio::prelude::*;
 
 use crate::disk_manager::*;
-use std::collections::HashMap;
-use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::cell::UnsafeCell;
+use std::collections::HashMap;
+use std::ops::DerefMut;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::RwLock;
 
 use bitvec::vec::BitVec;
@@ -80,9 +80,7 @@ impl<'a> Drop for PinnedPage<'a> {
 impl PinnedPage<'_> {
     pub fn id(&self) -> PageId {
         // SAFETY: The page is pinned, so the buffer pool is not switching it to a different one
-        unsafe {
-            *self.page.id.get()
-        }
+        unsafe { *self.page.id.get() }
     }
 
     pub fn dirty(&self) {
@@ -159,10 +157,7 @@ impl BufferPool {
                 // A: Yes, but maybe a different one? (we shouldn't block reading existing tables,
                 // but we don't want to read the same page twice)
                 let mut data = page.data.write().await; // FIXME: we have exclusive access, shouldn't have to lock
-                inner
-                    .disk_manager
-                    .read_page(page_id, &mut data)
-                    .await?;
+                inner.disk_manager.read_page(page_id, &mut data).await?;
 
                 inner.page_table.insert(page_id, frame_id);
 
@@ -238,11 +233,8 @@ impl BufferPool {
                 inner.page_table.remove(&page_id);
 
                 if page.dirty.load(Ordering::SeqCst) {
-                    let mut data = page.data.write().await; // FIXME: we have exclusive access, shouldn't have to lock
-                    inner
-                        .disk_manager
-                        .write_page(page_id, &mut data)
-                        .await?;
+                    let data = page.data.read().await; // FIXME: we have exclusive access, shouldn't have to lock
+                    inner.disk_manager.write_page(page_id, &data).await?;
                     page.dirty.store(false, Ordering::SeqCst);
                 }
 

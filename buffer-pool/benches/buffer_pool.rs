@@ -9,18 +9,13 @@ extern crate test;
 use buffer_pool::disk_manager::*;
 use buffer_pool::*;
 
-use bitvec::vec::BitVec;
 use rand::{Rng, SeedableRng};
-use std::collections::HashMap;
-use std::collections::HashSet;
+
 use std::future::Future;
-use std::ops::{Deref, DerefMut};
-use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
 use std::sync::Arc;
 use tokio::fs;
 use tokio::prelude::*;
-use tokio::sync::RwLock;
 
 async fn with_temp_db<R, RF: Future<Output = Result<R>>, F: FnOnce(DiskManager) -> RF>(
     f: F,
@@ -71,11 +66,11 @@ fn multithreaded_single_pin_per_thread_bench(b: &mut test::bench::Bencher) {
 
                             let mut values = Box::new([0u8; num_pages]);
                             let mut pinned_pages: Vec<Option<PinnedPage>> = vec![];
-                            for page_id in 0..num_pages {
+                            for _page_id in 0..num_pages {
                                 pinned_pages.push(None);
                             }
 
-                            for i in 0..1000usize {
+                            for _i in 0..1000usize {
                                 let page_id = PageId(rng.gen_range(0, pinned_pages.len()));
                                 let mut page_to_save: Option<PinnedPage> = None;
                                 let (page, should_unpin): (&PinnedPage, bool) = match &pinned_pages
