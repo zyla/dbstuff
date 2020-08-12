@@ -11,6 +11,7 @@ use crate::disk_manager::*;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::cell::UnsafeCell;
 use tokio::sync::RwLock;
 
 use bitvec::vec::BitVec;
@@ -30,21 +31,18 @@ impl From<io::Error> for Error {
 }
 
 pub struct Page {
-    pub id: PageId,
+    id: UnsafeCell<PageId>,
     dirty: AtomicBool,
     pin_count: AtomicUsize,
-    pub data: RwLock<PageData>,
+    data: RwLock<PageData>,
 }
 
-impl Page {
-    pub fn dirty(&self) {
-        self.dirty.store(true, Ordering::SeqCst);
-    }
-
-    pub fn pin_count(&self) -> usize {
-        self.pin_count.load(Ordering::SeqCst)
-    }
-}
+// SAFETY: We're protecting the UnsafeCell inside Page by the combination of
+// buffer pool lock and pin count.
+// TODO: Check whether we really satisfy the guarantees of Send, in particular if nothing is
+// screwed up across awaits
+unsafe impl Send for Page {}
+unsafe impl Sync for Page {}
 
 impl std::fmt::Debug for Page {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -79,11 +77,24 @@ impl<'a> Drop for PinnedPage<'a> {
     }
 }
 
-impl Deref for PinnedPage<'_> {
-    type Target = Page;
+impl PinnedPage<'_> {
+    pub fn id(&self) -> PageId {
+        // SAFETY: The page is pinned, so the buffer pool is not switching it to a different one
+        unsafe {
+            *self.page.id.get()
+        }
+    }
 
-    fn deref(&self) -> &Self::Target {
-        self.page
+    pub fn dirty(&self) {
+        self.page.dirty.store(true, Ordering::SeqCst);
+    }
+
+    pub fn pin_count(&self) -> usize {
+        self.page.pin_count.load(Ordering::SeqCst)
+    }
+
+    pub fn data(&self) -> &RwLock<PageData> {
+        &self.page.data
     }
 }
 
@@ -93,7 +104,7 @@ impl BufferPool {
         let mut free_frames = Vec::with_capacity(capacity);
         for i in 0..capacity {
             frames.push(Page {
-                id: PageId(std::usize::MAX),
+                id: UnsafeCell::new(PageId(std::usize::MAX)),
                 dirty: AtomicBool::default(),
                 pin_count: AtomicUsize::default(),
                 data: RwLock::new([0; PAGE_SIZE]),
@@ -134,41 +145,32 @@ impl BufferPool {
 
                 let frame_id = self.get_free_frame(inner.deref_mut()).await?;
 
+                let page = &self.frames[frame_id];
                 // SAFETY: We're sure nobody else is accessing this Page,
                 // because we just pulled it off the free list, and we're still holding the page
                 // table lock.
-                let page = unsafe { self.get_mut_page(frame_id) };
-                page.id = page_id;
-                *page.dirty.get_mut() = false;
-                *page.pin_count.get_mut() = 1;
+                unsafe {
+                    page.id.get().write(page_id);
+                }
+                page.dirty.store(false, Ordering::SeqCst);
+                page.pin_count.store(1, Ordering::SeqCst);
 
                 // TODO: Should we still hold the lock while we're doing IO?
                 // A: Yes, but maybe a different one? (we shouldn't block reading existing tables,
                 // but we don't want to read the same page twice)
+                let mut data = page.data.write().await; // FIXME: we have exclusive access, shouldn't have to lock
                 inner
                     .disk_manager
-                    .read_page(page_id, page.data.get_mut())
+                    .read_page(page_id, &mut data)
                     .await?;
 
                 inner.page_table.insert(page_id, frame_id);
 
                 inner.ref_flag.set(frame_id, true);
 
-                // I believe this is necessary to stretch the lifetime of the lock guard after we stop
-                // using `page`.
-                // TODO: actually check this - does Rust guarantee lifetime until end of block?
-                drop(inner);
-
                 Ok(PinnedPage { page })
             }
         }
-    }
-
-    // TODO: replace this with UnsafeCell (clippy says this is undefined behavior)
-    #[allow(clippy::mut_from_ref)]
-    #[allow(clippy::cast_ref_to_mut)]
-    unsafe fn get_mut_page(&self, frame_id: FrameId) -> &mut Page {
-        &mut *(&self.frames[frame_id] as *const Page as *mut Page)
     }
 
     pub async fn is_page_in_memory(&self, page_id: PageId) -> bool {
@@ -200,25 +202,23 @@ impl BufferPool {
 
         let page_id = inner.disk_manager.allocate_page().await?;
 
+        let page = &self.frames[frame_id];
         // SAFETY: We're sure nobody else is accessing this Page,
         // because we just pulled it off the free list, and we're still holding the page
         // table lock.
-        let page = unsafe { self.get_mut_page(frame_id) };
-        page.id = page_id;
-        *page.dirty.get_mut() = false;
-        *page.pin_count.get_mut() = 1;
+        unsafe {
+            page.id.get().write(page_id);
+        }
+        page.dirty.store(false, Ordering::SeqCst);
+        page.pin_count.store(1, Ordering::SeqCst);
 
         // Zero-fill the newly created page
-        let data = page.data.get_mut();
+        let mut data = page.data.write().await; // FIXME: we have exclusive access, shouldn't have to lock
         for i in data.iter_mut() {
             *i = 0;
         }
 
         inner.page_table.insert(page_id, frame_id);
-
-        // I believe this is necessary to stretch the lifetime of the lock guard after we stop
-        // using `page`.
-        drop(inner);
 
         Ok(PinnedPage { page })
     }
@@ -228,29 +228,25 @@ impl BufferPool {
             Some(frame_id) => Ok(frame_id),
             None => {
                 let frame_id = self.find_victim(inner)?;
+                let page = &self.frames[frame_id];
+                // SAFETY:
+                // - find_victim returns only frames with pin_count == 0
+                // - we're still holding buffer pool lock
+                let page_id = unsafe { *page.id.get() };
+                unsafe { page.id.get().write(PageId(std::usize::MAX)) }
 
-                //                println!("evict {}", frame_id);
+                inner.page_table.remove(&page_id);
 
-                // SAFETY: We're sure nobody else is accessing this Page,
-                // because:
-                // - we observed its pin_count at 0, and
-                // - nobody could have increased it, because pin_count only increases while holding
-                // writer lock on `inner`.
-                let page = unsafe { self.get_mut_page(frame_id) };
-
-                inner.page_table.remove(&page.id);
-
-                if *page.dirty.get_mut() {
-                    //                    println!("Writing dirty page {:?}", page.id);
+                if page.dirty.load(Ordering::SeqCst) {
+                    let mut data = page.data.write().await; // FIXME: we have exclusive access, shouldn't have to lock
                     inner
                         .disk_manager
-                        .write_page(page.id, page.data.get_mut())
+                        .write_page(page_id, &mut data)
                         .await?;
-                    *page.dirty.get_mut() = false;
+                    page.dirty.store(false, Ordering::SeqCst);
                 }
 
-                page.id = PageId(std::usize::MAX);
-                *page.pin_count.get_mut() = 0;
+                page.pin_count.store(0, Ordering::SeqCst);
 
                 Ok(frame_id)
             }

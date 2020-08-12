@@ -33,11 +33,11 @@ async fn test_allocate_and_read_one_page() {
     with_temp_db(|disk_manager| async {
         let buffer_pool = BufferPool::new(disk_manager, 1);
         let page = buffer_pool.allocate_page().await?;
-        assert_eq!(page.id, PageId(0));
-        page.data.write().await[0] = 5;
+        assert_eq!(page.id(), PageId(0));
+        page.data().write().await[0] = 5;
 
         let page = buffer_pool.get_page(PageId(0)).await?;
-        assert_eq!(page.data.read().await[0], 5);
+        assert_eq!(page.data().read().await[0], 5);
 
         Ok(())
     })
@@ -71,8 +71,8 @@ async fn test_write_and_read_evicted_page() {
         let buffer_pool = BufferPool::new(disk_manager, 1);
 
         let page = buffer_pool.allocate_page().await?;
-        assert_eq!(page.id, PageId(0));
-        page.data.write().await[0] = 5;
+        assert_eq!(page.id(), PageId(0));
+        page.data().write().await[0] = 5;
         page.dirty();
         drop(page);
 
@@ -81,7 +81,7 @@ async fn test_write_and_read_evicted_page() {
         assert!(!buffer_pool.is_page_in_memory(PageId(0)).await);
 
         let page = buffer_pool.get_page(PageId(0)).await?;
-        assert_eq!(page.data.read().await[0], 5);
+        assert_eq!(page.data().read().await[0], 5);
 
         Ok(())
     })
@@ -136,13 +136,13 @@ async fn random_multi_pin_test() {
             };
 
             debug!("Reading {:?}", page_id);
-            let value = page.data.read().await[0];
+            let value = page.data().read().await[0];
             assert_eq!(value, values[page_id.0]);
 
             if rng.gen() {
                 debug!("Writing to {:?}", page_id);
-                values[page.id.0] = values[page_id.0].wrapping_add(1);
-                page.data.write().await[0] = values[page_id.0];
+                values[page.id().0] = values[page_id.0].wrapping_add(1);
+                page.data().write().await[0] = values[page_id.0];
                 page.dirty();
             }
 
@@ -226,13 +226,13 @@ async fn random_multithreaded_multi_pin_test() {
                     };
 
                     //                    debug!("Reading {:?}", page_id);
-                    let value = page.data.read().await[thread_id];
+                    let value = page.data().read().await[thread_id];
                     assert_eq!(value, values[page_id.0]);
 
                     if rng.gen() {
                         //                        debug!("Writing to {:?}", page_id);
-                        values[page.id.0] = values[page_id.0].wrapping_add(1);
-                        page.data.write().await[thread_id] = values[page_id.0];
+                        values[page.id().0] = values[page_id.0].wrapping_add(1);
+                        page.data().write().await[thread_id] = values[page_id.0];
                         page.dirty();
                     }
 
@@ -329,16 +329,16 @@ async fn random_multithreaded_single_pin_per_thread_test() {
                         }
                         Some(page) => (page, true),
                     };
-                    assert_eq!(page.id, page_id);
+                    assert_eq!(page.id(), page_id);
 
                     //                    debug!("Reading {:?}", page_id);
-                    let value = page.data.read().await[thread_id];
+                    let value = page.data().read().await[thread_id];
                     assert_eq!(value, values[page_id.0]);
 
                     if rng.gen() {
                         //                        debug!("Writing to {:?}", page_id);
                         values[page_id.0] = values[page_id.0].wrapping_add(1);
-                        page.data.write().await[thread_id] = values[page_id.0];
+                        page.data().write().await[thread_id] = values[page_id.0];
                         page.dirty();
                     }
 

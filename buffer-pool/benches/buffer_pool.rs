@@ -96,13 +96,13 @@ fn multithreaded_single_pin_per_thread_bench(b: &mut test::bench::Bencher) {
                                 };
 
                                 //                    println!("Reading {:?}", page_id);
-                                let value = page.data.read().await[thread_id];
+                                let value = page.data().read().await[thread_id];
                                 assert_eq!(value, values[page_id.0]);
 
                                 if rng.gen() {
                                     //                        println!("Writing to {:?}", page_id);
                                     values[page_id.0] = values[page_id.0].wrapping_add(1);
-                                    page.data.write().await[thread_id] = values[page_id.0];
+                                    page.data().write().await[thread_id] = values[page_id.0];
                                     page.dirty();
                                 }
 
