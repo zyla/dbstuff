@@ -21,7 +21,7 @@ macro_rules! debug {
 async fn with_temp_db<R, RF: Future<Output = Result<R>>, F: FnOnce(DiskManager) -> RF>(
     f: F,
 ) -> Result<R> {
-    let filename = format!("test.db.{}", rand::random::<usize>());
+    let filename = format!("/tmp/test.db.{}", rand::random::<usize>());
     let disk_manager = DiskManager::open(&filename).await?;
     fs::remove_file(filename).await?;
     let result = f(disk_manager).await;
