@@ -2,6 +2,9 @@
 extern crate assert_matches;
 extern crate rand;
 
+#[macro_use]
+extern crate log;
+
 use buffer_pool::disk_manager::*;
 use buffer_pool::*;
 
@@ -13,10 +16,6 @@ use std::future::Future;
 use rand::{Rng, SeedableRng};
 use std::collections::HashSet;
 use std::sync::Arc;
-
-macro_rules! debug {
-    ($($arg:tt)*) => {};
-}
 
 async fn with_temp_db<R, RF: Future<Output = Result<R>>, F: FnOnce(DiskManager) -> RF>(
     f: F,
@@ -276,6 +275,8 @@ async fn random_multithreaded_multi_pin_test() {
 
 #[tokio::test(core_threads = 6)]
 async fn random_multithreaded_single_pin_per_thread_test() {
+    env_logger::init();
+
     with_temp_db(|disk_manager| async {
         const num_threads: usize = 6;
         const max_pins_per_thread: usize = 3;
@@ -358,7 +359,7 @@ async fn random_multithreaded_single_pin_per_thread_test() {
                                 .enumerate()
                                 .filter_map(|(id, op)| op.as_ref().map(|p| (
                                     id,
-                                    p.id,
+                                    p.id(),
                                     p.pin_count()
                                 )))
                                 .collect::<Vec<_>>()
