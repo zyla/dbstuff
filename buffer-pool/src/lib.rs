@@ -126,8 +126,20 @@ impl BufferPool {
         let inner = self.lock.read().await;
         match inner.page_table.get(&page_id) {
             Some(&frame_id) => {
-                drop(inner);
-                self.pin_existing_page(frame_id).await
+                let page = &self.frames[frame_id];
+                let old_pin_count = page.pin_count.fetch_add(1, Ordering::SeqCst);
+
+                if old_pin_count == 0 {
+                    drop(inner);
+                    let mut inner = self.lock.write().await;
+
+                    // Do we really need to take the writer lock here? Seems insane!
+                    // TODO: Measure if we can get some improvement if we have a different lock, or use a
+                    // lock-free bit vector
+                    inner.ref_flag.set(frame_id, true);
+                }
+
+                Ok(PinnedPage { page })
             }
             None => {
                 drop(inner);
@@ -137,8 +149,14 @@ impl BufferPool {
                 // Somebody else may have fetched the same page before we got the writer lock,
                 // in which case we're done.
                 if let Some(&frame_id) = inner.page_table.get(&page_id) {
-                    drop(inner);
-                    return self.pin_existing_page(frame_id).await;
+                    let page = &self.frames[frame_id];
+                    let old_pin_count = page.pin_count.fetch_add(1, Ordering::SeqCst);
+
+                    if old_pin_count == 0 {
+                        inner.ref_flag.set(frame_id, true);
+                    }
+
+                    return Ok(PinnedPage { page });
                 }
 
                 let frame_id = self.get_free_frame(inner.deref_mut()).await?;
@@ -171,23 +189,6 @@ impl BufferPool {
     pub async fn is_page_in_memory(&self, page_id: PageId) -> bool {
         let inner = self.lock.read().await;
         inner.page_table.contains_key(&page_id)
-    }
-
-    // May lock `inner` in write mode.
-    async fn pin_existing_page(&self, frame_id: FrameId) -> Result<PinnedPage<'_>> {
-        let page = &self.frames[frame_id];
-        let old_pin_count = page.pin_count.fetch_add(1, Ordering::SeqCst);
-
-        if old_pin_count == 0 {
-            let mut inner = self.lock.write().await;
-
-            // Do we really need to take the writer lock here? Seems insane!
-            // TODO: Measure if we can get some improvement if we have a different lock, or use a
-            // lock-free bit vector
-            inner.ref_flag.set(frame_id, true);
-        }
-
-        Ok(PinnedPage { page })
     }
 
     // TODO: decopypaste - get_page
