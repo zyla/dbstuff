@@ -1,10 +1,16 @@
-When we get page from the buffer pool, we should get a shared PinnedPage.
+## How to make locking more fine-grained
 
-PinnedPage is like Rc, but a bit different - we don't immediately deallocate after pinCount reaches zero.
-So we must have some unsafety in the buffer pool manager.
+Step 1: Stop holding lock during IO - after locking global hashtable, lock Page, unlock global hashtable
+ -> go IO while holding only Page lock
 
-Let's first remove allocation concerns from this thing.
--> Wait, what about evicting?
-  -> Let's try it.
+Step 2: Observe that if memory pool is fixed size, then global hashtable can be also fixed size!
+ -> This means that we can quite easily make it lock free
 
-Only after we lock it, we get access to the contents.
+Page lock protocol:
+- If pin_count > 0, then we can just use it (still need RwLock on data though)
+- If pin_count == 0, then need to acquire control lock first
+
+The above is quite simplistic, and causes much control lock acquiring when the system is mostly idle (pages are not pinned).
+Can make it more sophisticated by squeezing in an additional state (LOCKED) to the pin count word.
+
+Step 3: can we get rid of the page data RwLock?
