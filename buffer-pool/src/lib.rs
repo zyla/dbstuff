@@ -1,4 +1,5 @@
 pub mod disk_manager;
+pub mod hashtable;
 
 #[macro_use]
 extern crate bitvec;
