@@ -7,8 +7,8 @@ extern crate assert_matches;
 #[macro_use]
 extern crate log;
 
-use buffer_pool::buffer_pool::*;
-use buffer_pool::disk_manager::*;
+use ::buffer_pool::buffer_pool::*;
+use ::buffer_pool::disk_manager::*;
 
 use tokio::fs;
 
