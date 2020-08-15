@@ -170,8 +170,10 @@ impl<K: Data, V: Data, H: Hasher> HashTable<K, V, H> {
                 if v == V::sentinel().to_u64() {
                     return None;
                 } else {
-                    // FIXME: we should probably recheck the key here - otherwise how do we know
-                    // we're not reading value for a different key?
+                    // Check if someone overwrote the entry
+                    if entry.key.load(Ordering::SeqCst) != k {
+                        continue;
+                    }
                     return Some(V::from_u64(v));
                 }
             } else {
