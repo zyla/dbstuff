@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering, AtomicBool};
 
-pub trait Data: Copy {
+pub trait Data: Copy + Eq {
     fn to_u64(self) -> u64;
     fn from_u64(value: u64) -> Self;
     fn sentinel() -> Self;
@@ -53,6 +53,8 @@ impl<K: Data, V: Data, H: Hasher> HashTable<K, V, H> {
     }
 
     pub fn insert(&self, key: K, value: V) -> Result<(), InsertError<V>> {
+        debug_assert!(key != K::sentinel());
+        debug_assert!(value != V::sentinel());
         let h = self.hasher.hash(key.to_u64());
         let mut index = self.hash_to_index(h);
         let mut num_tries = 0;
@@ -107,6 +109,7 @@ impl<K: Data, V: Data, H: Hasher> HashTable<K, V, H> {
     }
 
     pub fn delete(&self, key: K) -> Option<V> {
+        debug_assert!(key != K::sentinel());
         let h = self.hasher.hash(key.to_u64());
         let mut index = self.hash_to_index(h);
         let mut num_tries = 0;
@@ -146,12 +149,17 @@ impl<K: Data, V: Data, H: Hasher> HashTable<K, V, H> {
     }
 
     pub fn lookup(&self, key: K) -> Option<V> {
+        debug_assert!(key != K::sentinel());
         let h = self.hasher.hash(key.to_u64());
         let mut index = self.hash_to_index(h);
         let mut num_tries = 0;
         loop {
             let entry = &self.data[index];
             let k = entry.key.load(Ordering::SeqCst);
+
+            // Buggify
+            std::thread::sleep_ms(1);
+
             if k == K::sentinel().to_u64() {
                 return None;
             } else if k == key.to_u64() {
@@ -205,6 +213,9 @@ impl Hasher for FNV1 {
 mod tests {
     use super::*;
     use InsertError::*;
+    use crossbeam_utils::thread;
+    use std::collections::{HashMap as StdHashMap};
+    use rand::Rng;
 
     // Identity hash for testing
     #[derive(Default)]
@@ -216,7 +227,7 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
     struct X(u64);
 
     impl Data for X {
@@ -304,9 +315,95 @@ mod tests {
         assert_eq!(table.delete(X(1)), Some(X(10)));
         assert_eq!(table.lookup(X(1)), None);
     }
+    
+    #[derive(Default)]
+    struct BadHash;
+
+    impl Hasher for BadHash {
+        fn hash(&self, x: u64) -> u64 {
+            0 //x & 0xf0
+        }
+    }
 
     #[test]
     fn test_threaded_insert_lookup() {
-        // TODO
+        const ITERATIONS: usize = 100_000;
+        const SIZE: usize = 128;
+        let table = HashTable::<X, X, BadHash>::with_capacity(SIZE);
+        let finished = AtomicBool::new(false);
+        thread::scope(|s| {
+            s.spawn(|_| {
+                let mut rng = rand::thread_rng();
+                let mut local = StdHashMap::with_capacity(SIZE);
+
+                for _ in 0..ITERATIONS {
+                    let k = X(rng.gen_range(1, SIZE as u64 + 1));
+                    if local.contains_key(&k) {
+                        local.remove(&k);
+                        assert_eq!(table.delete(k), Some(k));
+                    } else {
+                        local.insert(k, k);
+                        assert_eq!(table.insert(k, k), Ok(()));
+                    }
+                }
+                finished.store(true, Ordering::SeqCst);
+            });
+            s.spawn(|_| {
+                let mut rng = rand::thread_rng();
+                let mut num_successes = 0;
+
+                while !finished.load(Ordering::Relaxed) {
+                    let k = X(rng.gen_range(1, SIZE as u64 + 1));
+                    match table.lookup(k) {
+                        Some(value) => {
+                            assert_eq!(value, k);
+                            num_successes += 1;
+                        }
+                        None => {}
+                    }
+                }
+
+                println!("num_successes={}", num_successes);
+            });
+        }).unwrap();
+    }
+
+    #[test]
+    fn test_threaded_alternating_values() {
+        const ITERATIONS: usize = 100_000;
+        const SIZE: usize = 2;
+        let table = HashTable::<X, X, BadHash>::with_capacity(SIZE);
+        let finished = AtomicBool::new(false);
+        thread::scope(|s| {
+            s.spawn(|_| {
+                let mut current_k = 0;
+
+                for _ in 0..ITERATIONS {
+                    let k = X(current_k + 100);
+                    table.insert(k, k).unwrap();
+                    table.delete(k).unwrap();
+                    current_k = (current_k + 1) & 1;
+                }
+                finished.store(true, Ordering::SeqCst);
+            });
+            s.spawn(|_| {
+                let mut num_successes = 0;
+                let mut current_k = 0;
+
+                while !finished.load(Ordering::Relaxed) {
+                    let k = X(current_k + 100);
+                    match table.lookup(k) {
+                        Some(value) => {
+                            assert_eq!(value, k);
+                            num_successes += 1;
+                        }
+                        None => {}
+                    }
+                    current_k = (current_k + 1) & 1;
+                }
+
+                println!("num_successes={}", num_successes);
+            });
+        }).unwrap();
     }
 }
