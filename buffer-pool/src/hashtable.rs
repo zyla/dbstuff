@@ -209,9 +209,9 @@ impl Hasher for FNV1 {
         for i in 0..8 {
             h = (h ^ ((x >> (i * 8)) & 0xff)).wrapping_mul(0x100000001b3);
         }
-        h }
+        h
+    }
 }
-
 
 #[cfg(test)]
 mod test_support {
@@ -226,7 +226,7 @@ mod test_support {
             x & 0xff
         }
     }
-    
+
     #[derive(Default)]
     pub struct BadHash;
 
@@ -254,13 +254,13 @@ mod test_support {
 
 #[cfg(all(test, not(loom)))]
 mod tests {
-    use super::*;
     use super::test_support::*;
-    use InsertError::*;
+    use super::*;
     use crossbeam_utils::thread;
-    use std::collections::{HashMap as StdHashMap};
     use rand::Rng;
-    use std::sync::atomic::{AtomicBool};
+    use std::collections::HashMap as StdHashMap;
+    use std::sync::atomic::AtomicBool;
+    use InsertError::*;
 
     #[test]
     fn test_whitebox_insert_1() {
@@ -376,7 +376,8 @@ mod tests {
 
                 println!("num_successes={}", num_successes);
             });
-        }).unwrap();
+        })
+        .unwrap();
     }
 
     // FIXME why isn't this failing?
@@ -416,19 +417,20 @@ mod tests {
 
                 println!("num_successes={}", num_successes);
             });
-        }).unwrap();
+        })
+        .unwrap();
     }
 }
 
 #[cfg(all(test, loom))]
 mod loom_tests {
-    use super::*;
     use super::test_support::*;
-    use InsertError::*;
+    use super::*;
     use crossbeam_utils::thread;
-    use std::collections::{HashMap as StdHashMap};
     use rand::Rng;
-    use std::sync::{Arc, atomic::{AtomicBool}};
+    use std::collections::HashMap as StdHashMap;
+    use std::sync::{atomic::AtomicBool, Arc};
+    use InsertError::*;
 
     #[test]
     fn test_loom_1() {
@@ -443,11 +445,9 @@ mod loom_tests {
                 table2.insert(X(2), X(102)).unwrap();
             });
 
-            let t2 = loom::thread::spawn(move || {
-                match table.lookup(X(1)) {
-                    Some(x) => assert_eq!(x, X(101)),
-                    None => {},
-                }
+            let t2 = loom::thread::spawn(move || match table.lookup(X(1)) {
+                Some(x) => assert_eq!(x, X(101)),
+                None => {}
             });
 
             t1.join().unwrap();
@@ -472,11 +472,9 @@ mod loom_tests {
                 table2.insert(X(2), X(103)).unwrap();
             });
 
-            let t2 = loom::thread::spawn(move || {
-                match table.lookup(X(1)) {
-                    Some(x) => assert_eq!(x, X(101)),
-                    None => {},
-                }
+            let t2 = loom::thread::spawn(move || match table.lookup(X(1)) {
+                Some(x) => assert_eq!(x, X(101)),
+                None => {}
             });
 
             t1.join().unwrap();
