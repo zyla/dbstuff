@@ -66,7 +66,8 @@ impl<K: Data, V: Data, H: Hasher> HashTable<K, V, H> {
         loop {
             let entry = &self.data[index];
             let k = entry.key.load(Ordering::SeqCst);
-            if k == K::sentinel().to_u64() {
+            let v = entry.value.load(Ordering::SeqCst);
+            if v == V::sentinel().to_u64() {
                 if entry
                     .key
                     .compare_exchange_weak(k, key.to_u64(), Ordering::SeqCst, Ordering::SeqCst)
