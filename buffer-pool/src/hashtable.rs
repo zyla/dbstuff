@@ -85,7 +85,11 @@ impl<K: Data, V: Data, H: Hasher> HashTable<K, V, H> {
                     Ok(_) => return Ok(()),
                     Err(existing_value) => {
                         // Someone raced with us and inserted something else into the "deleted
-                        // entry"
+                        // entry". Check if they didn't change the key, though, in which case we
+                        // should continue searching.
+                        if entry.key.load(Ordering::SeqCst) != key.to_u64() {
+                            continue;
+                        }
                         return Err(InsertError::AlreadyExists(V::from_u64(existing_value)));
                     }
                 }
@@ -479,6 +483,30 @@ mod loom_tests {
 
             t1.join().unwrap();
             t2.join().unwrap();
+        });
+    }
+
+    #[test]
+    fn test_loom_3_racing_inserts() {
+        loom::model(|| {
+            const SIZE: usize = 2;
+            let table = Arc::new(HashTable::<X, X, BadHash>::with_capacity(SIZE));
+            let table1 = table.clone();
+            let table2 = table.clone();
+
+            let t1 = loom::thread::spawn(move || {
+                table1.insert(X(1), X(101)).unwrap();
+            });
+
+            let t2 = loom::thread::spawn(move || {
+                table2.insert(X(2), X(102)).unwrap();
+            });
+
+            t1.join().unwrap();
+            t2.join().unwrap();
+
+            assert_eq!(table.lookup(X(1)), Some(X(101)));
+            assert_eq!(table.lookup(X(2)), Some(X(102)));
         });
     }
 }
