@@ -1,5 +1,10 @@
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicU64, Ordering, AtomicBool};
+
+#[cfg(loom)]
+use loom::sync::atomic::{AtomicU64, Ordering};
+
+//#[cfg(not(loom))]
+//use std::sync::atomic::{AtomicU64, Ordering};
 
 pub trait Data: Copy + Eq {
     fn to_u64(self) -> u64;
@@ -156,10 +161,6 @@ impl<K: Data, V: Data, H: Hasher> HashTable<K, V, H> {
         loop {
             let entry = &self.data[index];
             let k = entry.key.load(Ordering::SeqCst);
-
-            // Buggify
-            std::thread::sleep_ms(1);
-
             if k == K::sentinel().to_u64() {
                 return None;
             } else if k == key.to_u64() {
@@ -216,6 +217,8 @@ mod tests {
     use crossbeam_utils::thread;
     use std::collections::{HashMap as StdHashMap};
     use rand::Rng;
+    use std::sync::atomic::{AtomicBool};
+    use std::sync::{Arc};
 
     // Identity hash for testing
     #[derive(Default)]
@@ -320,8 +323,8 @@ mod tests {
     struct BadHash;
 
     impl Hasher for BadHash {
-        fn hash(&self, x: u64) -> u64 {
-            0 //x & 0xf0
+        fn hash(&self, _x: u64) -> u64 {
+            0
         }
     }
 
@@ -406,5 +409,31 @@ mod tests {
                 println!("num_successes={}", num_successes);
             });
         }).unwrap();
+    }
+
+    #[test]
+    #[cfg(loom)]
+    fn test_loom_1() {
+        loom::model(|| {
+            const SIZE: usize = 8;
+            let table = Arc::new(HashTable::<X, X, BadHash>::with_capacity(SIZE));
+            let table2 = table.clone();
+
+            let t1 = loom::thread::spawn(move || {
+                table2.insert(X(1), X(101)).unwrap();
+                table2.delete(X(1)).unwrap();
+                table2.insert(X(2), X(102)).unwrap();
+            });
+
+            let t2 = loom::thread::spawn(move || {
+                match table.lookup(X(1)) {
+                    Some(x) => assert_eq!(x, X(101)),
+                    None => {},
+                }
+            });
+
+            t1.join().unwrap();
+            t2.join().unwrap();
+        });
     }
 }
