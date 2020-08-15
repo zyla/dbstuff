@@ -368,6 +368,7 @@ mod tests {
         }).unwrap();
     }
 
+    // FIXME why isn't this failing?
     #[test]
     fn test_threaded_alternating_values() {
         const ITERATIONS: usize = 100_000;
