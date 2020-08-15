@@ -1,3 +1,5 @@
+#![cfg(not(loom))]
+
 use tokio::prelude::*;
 
 use crate::disk_manager::*;

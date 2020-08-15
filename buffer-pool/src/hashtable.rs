@@ -3,8 +3,8 @@ use std::marker::PhantomData;
 #[cfg(loom)]
 use loom::sync::atomic::{AtomicU64, Ordering};
 
-//#[cfg(not(loom))]
-//use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(loom))]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub trait Data: Copy + Eq {
     fn to_u64(self) -> u64;
@@ -209,32 +209,35 @@ impl Hasher for FNV1 {
         for i in 0..8 {
             h = (h ^ ((x >> (i * 8)) & 0xff)).wrapping_mul(0x100000001b3);
         }
-        h
-    }
+        h }
 }
 
+
 #[cfg(test)]
-mod tests {
+mod test_support {
     use super::*;
-    use InsertError::*;
-    use crossbeam_utils::thread;
-    use std::collections::{HashMap as StdHashMap};
-    use rand::Rng;
-    use std::sync::atomic::{AtomicBool};
-    use std::sync::{Arc};
 
     // Identity hash for testing
     #[derive(Default)]
-    struct TestHash;
+    pub struct TestHash;
 
     impl Hasher for TestHash {
         fn hash(&self, x: u64) -> u64 {
             x & 0xff
         }
     }
+    
+    #[derive(Default)]
+    pub struct BadHash;
+
+    impl Hasher for BadHash {
+        fn hash(&self, _x: u64) -> u64 {
+            0
+        }
+    }
 
     #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-    struct X(u64);
+    pub struct X(pub u64);
 
     impl Data for X {
         fn to_u64(self) -> u64 {
@@ -247,6 +250,17 @@ mod tests {
             Self(0)
         }
     }
+}
+
+#[cfg(all(test, not(loom)))]
+mod tests {
+    use super::*;
+    use super::test_support::*;
+    use InsertError::*;
+    use crossbeam_utils::thread;
+    use std::collections::{HashMap as StdHashMap};
+    use rand::Rng;
+    use std::sync::atomic::{AtomicBool};
 
     #[test]
     fn test_whitebox_insert_1() {
@@ -320,15 +334,6 @@ mod tests {
         assert_eq!(table.insert(X(1), X(10)), Ok(()));
         assert_eq!(table.delete(X(1)), Some(X(10)));
         assert_eq!(table.lookup(X(1)), None);
-    }
-    
-    #[derive(Default)]
-    struct BadHash;
-
-    impl Hasher for BadHash {
-        fn hash(&self, _x: u64) -> u64 {
-            0
-        }
     }
 
     #[test]
@@ -413,19 +418,58 @@ mod tests {
             });
         }).unwrap();
     }
+}
+
+#[cfg(all(test, loom))]
+mod loom_tests {
+    use super::*;
+    use super::test_support::*;
+    use InsertError::*;
+    use crossbeam_utils::thread;
+    use std::collections::{HashMap as StdHashMap};
+    use rand::Rng;
+    use std::sync::{Arc, atomic::{AtomicBool}};
 
     #[test]
-    #[cfg(loom)]
     fn test_loom_1() {
         loom::model(|| {
-            const SIZE: usize = 8;
+            const SIZE: usize = 1;
             let table = Arc::new(HashTable::<X, X, BadHash>::with_capacity(SIZE));
             let table2 = table.clone();
+            table2.insert(X(1), X(101)).unwrap();
+            table2.delete(X(1)).unwrap();
 
             let t1 = loom::thread::spawn(move || {
+                table2.insert(X(2), X(102)).unwrap();
+            });
+
+            let t2 = loom::thread::spawn(move || {
+                match table.lookup(X(1)) {
+                    Some(x) => assert_eq!(x, X(101)),
+                    None => {},
+                }
+            });
+
+            t1.join().unwrap();
+            t2.join().unwrap();
+        });
+    }
+
+    #[test]
+    fn test_loom_2() {
+        loom::model(|| {
+            const SIZE: usize = 1;
+            let table = Arc::new(HashTable::<X, X, BadHash>::with_capacity(SIZE));
+            let table2 = table.clone();
+            table2.insert(X(1), X(101)).unwrap();
+            table2.delete(X(1)).unwrap();
+
+            let t1 = loom::thread::spawn(move || {
+                table2.insert(X(2), X(102)).unwrap();
+                table2.delete(X(2)).unwrap();
                 table2.insert(X(1), X(101)).unwrap();
                 table2.delete(X(1)).unwrap();
-                table2.insert(X(2), X(102)).unwrap();
+                table2.insert(X(2), X(103)).unwrap();
             });
 
             let t2 = loom::thread::spawn(move || {

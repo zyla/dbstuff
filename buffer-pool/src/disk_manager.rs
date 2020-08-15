@@ -1,3 +1,5 @@
+#![cfg(not(loom))]
+
 use std::path::Path;
 use tokio::fs;
 use tokio::prelude::*;

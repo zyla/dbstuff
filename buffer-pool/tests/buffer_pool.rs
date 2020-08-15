@@ -1,14 +1,14 @@
+#![cfg(not(loom))]
 #![allow(non_upper_case_globals)]
 
 #[macro_use]
 extern crate assert_matches;
-extern crate rand;
 
 #[macro_use]
 extern crate log;
 
 use buffer_pool::disk_manager::*;
-use buffer_pool::*;
+use buffer_pool::buffer_pool::*;
 
 use tokio::fs;
 

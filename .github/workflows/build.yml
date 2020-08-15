@@ -24,6 +24,9 @@ jobs:
       - name: Run cargo test
         run: cd $CRATE && cargo test --color always --all
 
+      - name: Run cargo test with cfg(loom)
+        run: cd $CRATE && RUSTFLAGS='--cfg loom --cfg loom_nightly' cargo test --color always --lib
+
   test-table:
     name: test-table
     runs-on: ubuntu-latest
