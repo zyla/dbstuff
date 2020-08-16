@@ -6,8 +6,8 @@ extern crate rand;
 
 extern crate test;
 
-use ::buffer_pool::disk_manager::*;
 use ::buffer_pool::buffer_pool::*;
+use ::buffer_pool::disk_manager::*;
 
 use rand::{Rng, SeedableRng};
 

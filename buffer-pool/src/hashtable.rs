@@ -1,10 +1,16 @@
 use std::marker::PhantomData;
 
 #[cfg(loom)]
-use loom::sync::{atomic::{AtomicU64, Ordering}, Mutex};
+use loom::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex,
+};
 
 #[cfg(not(loom))]
-use std::sync::{atomic::{AtomicU64, Ordering}, Mutex};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex,
+};
 
 pub trait Data: Copy + Eq {
     fn to_u64(self) -> u64;
@@ -19,6 +25,7 @@ pub struct HashTable<K, V, H = FNV1> {
 
 struct Entry<K, V> {
     writer_lock: Mutex<()>,
+    #[allow(dead_code)] // for now
     seq: AtomicU64,
     key: AtomicU64,
     value: AtomicU64,
