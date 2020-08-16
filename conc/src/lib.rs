@@ -1,6 +1,5 @@
-mod sync;
-
-use sync::{AtomicUsize, Ordering::*};
+use loom::sync::atomic::{AtomicUsize, Ordering::*};
+use std::sync::Arc;
 
 pub struct Entry {
     buggy: bool,
@@ -43,43 +42,37 @@ impl Entry {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Arc;
+#[test]
+fn test_buggy() {
+    test(true);
+}
 
-    #[test]
-    fn test_buggy() {
-        test(true);
-    }
+#[test]
+fn test_non_buggy() {
+    test(false);
+}
 
-    #[test]
-    fn test_non_buggy() {
-        test(false);
-    }
+fn test(buggy: bool) {
+    loom::model(move || {
+        let entry = Arc::new(Entry::new(buggy));
+        let entry1 = entry.clone();
+        let entry2 = entry.clone();
 
-    fn test(buggy: bool) {
-        loom::model(move || {
-            let entry = Arc::new(Entry::new(buggy));
-            let entry1 = entry.clone();
-            let entry2 = entry.clone();
+        entry.set(1, 101);
 
-            entry.set(1, 101);
-
-            let t1 = loom::thread::spawn(move || {
-                entry1.set(2, 102);
-                entry1.set(1, 101);
-            });
-
-            let t2 = loom::thread::spawn(move || match entry2.get() {
-                Some((1, 101)) => {}
-                Some((2, 102)) => {}
-                None => {}
-                Some((k, v)) => panic!("unknown kv pair: {:?}", (k, v)),
-            });
-
-            t1.join().unwrap();
-            t2.join().unwrap();
+        let t1 = loom::thread::spawn(move || {
+            entry1.set(2, 102);
+            entry1.set(1, 101);
         });
-    }
+
+        let t2 = loom::thread::spawn(move || match entry2.get() {
+            Some((1, 101)) => {}
+            Some((2, 102)) => {}
+            None => {}
+            Some((k, v)) => panic!("unknown kv pair: {:?}", (k, v)),
+        });
+
+        t1.join().unwrap();
+        t2.join().unwrap();
+    });
 }

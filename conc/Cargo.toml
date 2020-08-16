@@ -7,6 +7,4 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-
-[target.'cfg(loom)'.dependencies]
-loom = { version = "0.3" }
+loom = "0.3"
