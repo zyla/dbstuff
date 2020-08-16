@@ -8,37 +8,35 @@ pub struct Entry {
 }
 
 #[test]
-fn test_buggy() {
+fn test_with_extra_load() {
     test(true);
 }
 
 #[test]
-fn test_non_buggy() {
+fn test_without_extra_load() {
     test(false);
 }
 
-fn test(buggy: bool) {
+fn test(with_extra_load: bool) {
     let results = collect_all_outcomes(move || {
         let entry = Arc::new(Entry {
             key: AtomicUsize::new(1),
-            value: AtomicUsize::new(101),
+            value: AtomicUsize::new(0),
         });
         let entry1 = entry.clone();
         let entry2 = entry.clone();
 
         let t1 = loom::thread::spawn(move || {
-            entry1.value.store(0, SeqCst);
             entry1.key.store(2, SeqCst);
             entry1.value.store(102, SeqCst);
 
             entry1.value.store(0, SeqCst);
 
-            if buggy {
+            if with_extra_load {
                 entry1.key.load(SeqCst);
             }
 
             entry1.key.store(1, SeqCst);
-            entry1.value.store(101, SeqCst);
         });
 
         let t2 = loom::thread::spawn(move || loop {
@@ -53,7 +51,7 @@ fn test(buggy: bool) {
         t1.join().unwrap();
         t2.join().unwrap()
     });
-    assert_eq!(results, vec![(1, 0), (1, 101), (1, 102), (2, 0), (2, 102)]);
+    assert_eq!(results, vec![(1, 0), (1, 102), (2, 0), (2, 102)]);
 }
 
 /// Run all interleavings of the given function using Loom and return the sorted list of all
