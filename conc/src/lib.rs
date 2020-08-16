@@ -13,6 +13,7 @@ fn test_outcomes_should_be_the_same() {
 }
 
 fn run_example(with_extra_load: bool) -> Vec<(usize, usize)> {
+    println!("run_example(with_extra_load={})", with_extra_load);
     collect_all_outcomes(move || {
         let entry = Arc::new(Entry {
             key: AtomicUsize::new(0),
