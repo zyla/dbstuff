@@ -28,17 +28,14 @@ impl Entry {
         self.value.store(value, SeqCst);
     }
 
-    pub fn get(&self) -> Option<(usize, usize)> {
+    pub fn get(&self) -> (usize, usize) {
         loop {
             let key = self.key.load(SeqCst);
             let value = self.value.load(SeqCst);
-            if value == 0 {
-                return None;
-            }
             if self.key.load(SeqCst) != key {
                 continue;
             }
-            return Some((key, value));
+            return (key, value);
         }
     }
 }
@@ -89,6 +86,6 @@ fn test(buggy: bool) {
     });
     assert_eq!(
         results,
-        vec![None, Some((1, 101)), Some((1, 102)), Some((2, 102))]
+        vec![(1, 0), (1, 101), (1, 102), (2, 0), (2, 102)]
     );
 }
