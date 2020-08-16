@@ -1,10 +1,10 @@
 use std::marker::PhantomData;
 
 #[cfg(loom)]
-use loom::sync::atomic::{AtomicU64, Ordering};
+use loom::sync::{atomic::{AtomicU64, Ordering}, Mutex};
 
 #[cfg(not(loom))]
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{atomic::{AtomicU64, Ordering}, Mutex};
 
 pub trait Data: Copy + Eq {
     fn to_u64(self) -> u64;
@@ -18,6 +18,8 @@ pub struct HashTable<K, V, H = FNV1> {
 }
 
 struct Entry<K, V> {
+    writer_lock: Mutex<()>,
+    seq: AtomicU64,
     key: AtomicU64,
     value: AtomicU64,
     _phantom: PhantomData<(K, V)>,
@@ -26,6 +28,8 @@ struct Entry<K, V> {
 impl<K: Data, V: Data> Entry<K, V> {
     fn empty() -> Self {
         Self {
+            writer_lock: Mutex::new(()),
+            seq: AtomicU64::new(0),
             key: AtomicU64::new(K::sentinel().to_u64()),
             value: AtomicU64::new(V::sentinel().to_u64()),
             _phantom: PhantomData,
@@ -68,6 +72,10 @@ impl<K: Data, V: Data, H: Hasher> HashTable<K, V, H> {
             let k = entry.key.load(Ordering::SeqCst);
             let v = entry.value.load(Ordering::SeqCst);
             if v == V::sentinel().to_u64() {
+                let _guard = entry.writer_lock.lock().unwrap();
+                if entry.value.load(Ordering::SeqCst) != V::sentinel().to_u64() {
+                    continue;
+                }
                 if entry
                     .key
                     .compare_exchange_weak(k, key.to_u64(), Ordering::SeqCst, Ordering::SeqCst)
@@ -90,21 +98,6 @@ impl<K: Data, V: Data, H: Hasher> HashTable<K, V, H> {
                         if entry.key.load(Ordering::SeqCst) != key.to_u64() {
                             continue;
                         }
-                        return Err(InsertError::AlreadyExists(V::from_u64(existing_value)));
-                    }
-                }
-            } else if k == key.to_u64() {
-                // No overwrites - only insert if it's empty
-                match entry.value.compare_exchange_weak(
-                    V::sentinel().to_u64(),
-                    value.to_u64(),
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                ) {
-                    Ok(_) => return Ok(()),
-                    Err(existing_value) => {
-                        // Someone raced with us and inserted something else into the "deleted
-                        // entry"
                         return Err(InsertError::AlreadyExists(V::from_u64(existing_value)));
                     }
                 }
@@ -169,7 +162,6 @@ impl<K: Data, V: Data, H: Hasher> HashTable<K, V, H> {
             if k == K::sentinel().to_u64() {
                 return None;
             } else if k == key.to_u64() {
-                // Don't break the chain - only replace value
                 let v = entry.value.load(Ordering::SeqCst);
                 if v == V::sentinel().to_u64() {
                     return None;
