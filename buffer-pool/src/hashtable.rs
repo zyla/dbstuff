@@ -451,6 +451,16 @@ mod loom_tests {
         });
     }
 
+    // FIXME: This should fail. Consider the scenario:
+    //
+    // 1. t2 starts `lookup`, reads key 1
+    // 2. t1 executes insert(2, 102)
+    // 3. t2 reads value 102
+    // 4. t1 executes delete(2) and insert(1, 101)
+    // 5. t2 "rechecks" key, sees 1, and thinks we're good
+    // 6. t2 returns lookup(1) = 102
+    //
+    // Somehow loom doesn't seem to find it.
     #[test]
     fn test_loom_2() {
         loom::model(|| {
@@ -464,8 +474,6 @@ mod loom_tests {
                 table2.insert(X(2), X(102)).unwrap();
                 table2.delete(X(2)).unwrap();
                 table2.insert(X(1), X(101)).unwrap();
-                table2.delete(X(1)).unwrap();
-                table2.insert(X(2), X(103)).unwrap();
             });
 
             let t2 = loom::thread::spawn(move || match table.lookup(X(1)) {
