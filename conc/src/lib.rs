@@ -12,33 +12,31 @@ fn test_outcomes_should_be_the_same() {
     assert_eq!(run_example(false), run_example(true));
 }
 
-fn run_example(with_extra_load: bool) -> Vec<(usize, usize, usize)> {
+fn run_example(with_extra_load: bool) -> Vec<(usize, usize)> {
     collect_all_outcomes(move || {
         let entry = Arc::new(Entry {
-            key: AtomicUsize::new(1),
+            key: AtomicUsize::new(0),
             value: AtomicUsize::new(0),
         });
         let entry1 = entry.clone();
         let entry2 = entry.clone();
 
         let t1 = loom::thread::spawn(move || {
-            entry1.key.store(2, SeqCst);
-            entry1.value.store(102, SeqCst);
-
+            entry1.key.store(1, SeqCst);
+            entry1.value.store(1, SeqCst);
             entry1.value.store(0, SeqCst);
 
             if with_extra_load {
                 entry1.key.load(SeqCst);
             }
 
-            entry1.key.store(1, SeqCst);
+            entry1.key.store(0, SeqCst);
         });
 
         let t2 = loom::thread::spawn(move || loop {
-            let key1 = entry2.key.load(SeqCst);
             let value = entry2.value.load(SeqCst);
-            let key2 = entry2.key.load(SeqCst);
-            return (key1, value, key2);
+            let key = entry2.key.load(SeqCst);
+            return (value, key);
         });
 
         t1.join().unwrap();
