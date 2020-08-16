@@ -8,17 +8,12 @@ pub struct Entry {
 }
 
 #[test]
-fn test_with_extra_load() {
-    test(true);
+fn test_outcomes_should_be_the_same() {
+    assert_eq!(run_example(false), run_example(true));
 }
 
-#[test]
-fn test_without_extra_load() {
-    test(false);
-}
-
-fn test(with_extra_load: bool) {
-    let results = collect_all_outcomes(move || {
+fn run_example(with_extra_load: bool) -> Vec<(usize, usize, usize)> {
+    collect_all_outcomes(move || {
         let entry = Arc::new(Entry {
             key: AtomicUsize::new(1),
             value: AtomicUsize::new(0),
@@ -40,18 +35,15 @@ fn test(with_extra_load: bool) {
         });
 
         let t2 = loom::thread::spawn(move || loop {
-            let key = entry2.key.load(SeqCst);
+            let key1 = entry2.key.load(SeqCst);
             let value = entry2.value.load(SeqCst);
-            if entry2.key.load(SeqCst) != key {
-                continue;
-            }
-            return (key, value);
+            let key2 = entry2.key.load(SeqCst);
+            return (key1, value, key2);
         });
 
         t1.join().unwrap();
         t2.join().unwrap()
-    });
-    assert_eq!(results, vec![(1, 0), (1, 102), (2, 0), (2, 102)]);
+    })
 }
 
 /// Run all interleavings of the given function using Loom and return the sorted list of all
