@@ -108,6 +108,21 @@ impl<K: Data, V: Data, H: Hasher> HashTable<K, V, H> {
                         return Err(InsertError::AlreadyExists(V::from_u64(existing_value)));
                     }
                 }
+            } else if k == key.to_u64() {
+                // No overwrites - only insert if it's empty
+                match entry.value.compare_exchange_weak(
+                    V::sentinel().to_u64(),
+                    value.to_u64(),
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => return Ok(()),
+                    Err(existing_value) => {
+                        // Someone raced with us and inserted something else into the "deleted
+                        // entry"
+                        return Err(InsertError::AlreadyExists(V::from_u64(existing_value)));
+                    }
+                }
             } else {
                 num_tries += 1;
                 if num_tries > self.data.len() {
