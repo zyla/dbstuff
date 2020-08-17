@@ -16,14 +16,13 @@ fn run_example(with_extra_load: bool) -> Vec<(usize, usize)> {
     println!("run_example(with_extra_load={})", with_extra_load);
     collect_all_outcomes(move || {
         let entry = Arc::new(Entry {
-            key: AtomicUsize::new(0),
+            key: AtomicUsize::new(1),
             value: AtomicUsize::new(0),
         });
         let entry1 = entry.clone();
         let entry2 = entry.clone();
 
         let t1 = loom::thread::spawn(move || {
-            entry1.key.store(1, SeqCst);
             entry1.value.store(1, SeqCst);
             entry1.value.store(0, SeqCst);
 
