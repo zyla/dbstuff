@@ -243,7 +243,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cross_write() {
+    fn test_dirty_write() {
         let tx1 = Tx::new_with_id(1);
         let tx2 = Tx::new_with_id(2);
         let tx3 = Tx::new_with_id(3);
@@ -269,6 +269,13 @@ mod tests {
         // > Read uncommitted is a consistency model which prohibits dirty writes,
         // > where two transactions modify the same object concurrently before committing.
         // So indeed we should disallow this result.
-        assert_eq!((x1, y1), (2, 1));
+        //
+        // But how?
+        // - We don't want to lock.
+        // - Should we abort tx2 then?
+        // - Or maybe we should abort tx1?
+        // - What about just allowing both to commit, and letting the final result be (2, 2)? This
+        // is even _serializable_ - transactions appear as if they executed in sequence: [tx1, tx2, tx3]!
+        assert_eq!((x1, y1), (2, 2));
     }
 }
