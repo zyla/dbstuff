@@ -225,6 +225,11 @@ mod tests {
         assert_eq!(x.read(&tx1), 3);
     }
 
+    // Allowed by Read Committed, disallowed by Monotonic Atomic View
+    // (see <https://jepsen.io/consistency/models/monotonic-atomic-view>)
+    // (If I understand it correctly. After re-reading the article, it occured to me that it may be
+    // the case that MAV still allows this outcome, but disallows the opposite one (2, 0) - hence
+    // "monotonic")
     #[test]
     fn test_tearing() {
         let tx1 = Tx::new_with_id(1);
