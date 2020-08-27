@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 type TxId = usize;
@@ -10,6 +11,20 @@ type TxId = usize;
 struct Tx {
     id: TxId,
     mu: Arc<Mutex<TxInner>>,
+}
+
+impl PartialEq<Tx> for Tx {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for Tx {}
+
+impl Hash for Tx {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
@@ -21,7 +36,7 @@ enum TxState {
 
 use TxState::*;
 
-type Seen = HashSet<TxId>;
+type Seen = HashSet<Tx>;
 
 #[derive(Debug)]
 struct TxInner {
@@ -50,10 +65,10 @@ impl Tx {
         (inner.state, inner.seen.clone())
     }
 
-    fn mark_txs_as_seen(&self, txs: &[TxId]) {
+    fn mark_txs_as_seen(&self, txs: Vec<Tx>) {
         let mut inner = self.mu.lock().unwrap();
         assert!(inner.state == InProgress);
-        inner.seen.extend(txs);
+        inner.seen.extend(txs.into_iter());
     }
 
     fn commit(self) {
@@ -92,43 +107,44 @@ impl<T: Clone + std::fmt::Debug> Var<T> {
 
     fn read(&self, my_tx: &Tx) -> T {
         let inner = self.mu.lock().unwrap().clone();
-        let mut my_value = None;
-        let tx_states = inner.versions.iter().map(|(tx, value)| {
-            if tx.id() == my_tx.id() {
-                my_value = Some(value);
+        let mut g = petgraph::graphmap::GraphMap::<TxId, (), petgraph::Directed>::new();
+        let mut unvisited = HashSet::<Tx>::new();
+        for (tx, value) in &inner.versions {
+            if tx == my_tx {
+                return value.clone();
             }
-            let (state, seen) = tx.get_state();
-            (tx.id(), state, seen, value)
-        }).filter(|(_, state, _, _)| *state == Committed).collect::<Vec<_>>();
-        if let Some(v) = my_value {
-            return v.clone();
+            unvisited.insert(tx.clone());
         }
-        if tx_states.is_empty() {
+        while let Some(tx) = take_any(&mut unvisited) {
+            // TODO: expand into seen, add to graph
+        }
+        let sccs = petgraph::algo::kosaraju_scc(&g);
+        if sccs.is_empty() {
             return inner.initial_value;
         }
-        let mut g = petgraph::graphmap::GraphMap::<TxId, (), petgraph::Directed>::new();
-        for (txid, _, seen, _) in &tx_states {
-            g.add_node(*txid);
-            g.extend(seen.iter().map(|seen_txid| (*txid, *seen_txid)));
-        }
-        // FIXME: we need to get the full picture - we need to not only get `seen` from txs which
-        // wrote to this variable, but also from txs which it has seen! (and recursively, until we
-        // have no more to get).
-        println!("{:?}", tx_states);
-        let sccs = petgraph::algo::kosaraju_scc(&g);
         println!("{:?}", sccs);
         let last_scc = &sccs[sccs.len() - 1];
         let winning_txid = last_scc.iter().max().unwrap();
-        tx_states.iter().find_map(|(txid, _, _, value)| if txid == winning_txid { Some((*value).clone()) } else { None }).unwrap()
+        inner.versions.into_iter().find_map(|(tx, value)| if tx.id() == *winning_txid { Some(value) } else { None }).unwrap()
     }
 
     fn write(&self, my_tx: &Tx, value: T) {
         let mut inner = self.mu.lock().unwrap();
-        let txs_seen = inner.versions.iter().map(|(tx, _)| tx.id()).collect::<Vec<_>>();
+        let txs_seen = inner.versions.iter().map(|(tx, _)| tx.clone()).collect::<Vec<_>>();
         inner.versions.push((my_tx.clone(), value));
         drop(inner);
 
-        my_tx.mark_txs_as_seen(&txs_seen);
+        my_tx.mark_txs_as_seen(txs_seen);
+    }
+}
+
+fn take_any<T: Eq + Hash + Clone>(s: &mut HashSet<T>) -> Option<T> {
+    let item: Option<T> = s.iter().next().map(|x| x.clone());
+    match item {
+        Some(item) => {
+            s.take(&item)
+        }
+        None => None,
     }
 }
 
