@@ -390,6 +390,6 @@ mod tests {
         let y1 = y.read(&tx4);
         let z1 = z.read(&tx4);
 
-        assert_eq!((x1, y1, z1), (3, 3, 3));
+        assert_eq!((x1, y1, z1), (2, 3, 3));
     }
 }
