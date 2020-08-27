@@ -80,7 +80,7 @@ struct VarInner<T> {
     versions: Vec<(Tx, T)>,
 }
 
-impl<T: Clone> Var<T> {
+impl<T: Clone + std::fmt::Debug> Var<T> {
     fn new(initial_value: T) -> Self {
         Var {
             mu: Arc::new(Mutex::new(VarInner {
@@ -103,10 +103,23 @@ impl<T: Clone> Var<T> {
         if let Some(v) = my_value {
             return v.clone();
         }
-        match tx_states.len() {
-            0 => inner.initial_value,
-            _ => tx_states[tx_states.len() - 1].3.clone(),
+        if tx_states.is_empty() {
+            return inner.initial_value;
         }
+        let mut g = petgraph::graphmap::GraphMap::<TxId, (), petgraph::Directed>::new();
+        for (txid, _, seen, _) in &tx_states {
+            g.add_node(*txid);
+            g.extend(seen.iter().map(|seen_txid| (*txid, *seen_txid)));
+        }
+        // FIXME: we need to get the full picture - we need to not only get `seen` from txs which
+        // wrote to this variable, but also from txs which it has seen! (and recursively, until we
+        // have no more to get).
+        println!("{:?}", tx_states);
+        let sccs = petgraph::algo::kosaraju_scc(&g);
+        println!("{:?}", sccs);
+        let last_scc = &sccs[sccs.len() - 1];
+        let winning_txid = last_scc.iter().max().unwrap();
+        tx_states.iter().find_map(|(txid, _, _, value)| if txid == winning_txid { Some((*value).clone()) } else { None }).unwrap()
     }
 
     fn write(&self, my_tx: &Tx, value: T) {
@@ -251,7 +264,6 @@ mod tests {
     fn test_dirty_write() {
         let tx1 = Tx::new_with_id(1);
         let tx2 = Tx::new_with_id(2);
-        let tx3 = Tx::new_with_id(3);
         let x = Var::new(0);
         let y = Var::new(0);
 
@@ -266,21 +278,118 @@ mod tests {
         tx1.commit();
         tx2.commit();
 
+        let tx3 = Tx::new_with_id(3);
         let x1 = x.read(&tx3);
         let y1 = y.read(&tx3);
 
-        // Hmmm.
         // According to <https://jepsen.io/consistency/models/read-uncommitted>:
         // > Read uncommitted is a consistency model which prohibits dirty writes,
         // > where two transactions modify the same object concurrently before committing.
-        // So indeed we should disallow this result.
+        // So indeed we should disallow (1, 2) and (2, 1).
         //
-        // But how?
-        // - We don't want to lock.
-        // - Should we abort tx2 then?
-        // - Or maybe we should abort tx1?
-        // - What about just allowing both to commit, and letting the final result be (2, 2)? This
-        // is even _serializable_ - transactions appear as if they executed in sequence: [tx1, tx2, tx3]!
+        // Berenson et al. say[1], as I understand it, that we can't even allow concurrent transactions
+        // to execute a write to the same object. But why should we care about what happens inside
+        // a transaction until it commits?
+        // "If T1 or T2 then performs a ROLLBACK, it is unclear what the correct data value should
+        // be." - in our case it's clear - we just decide which transaction wins when they commit.
+        //
+        // So both (1, 1) and (2, 2) are legal outcomes. In our case (2, 2) is the result because
+        // we choose the lexicographically highest txid in case of a ww-dependency cycle.
+        //
+        // [1]: "A Critique of ANSI SQL Isolation Levels" <https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/tr-95-51.pdf>
         assert_eq!((x1, y1), (2, 2));
+    }
+
+    #[test]
+    fn test_dirty_write_2() {
+        // In this case we add a third writer transaction which has a ww-dependency on both tx1 and
+        // tx2. It should win.
+        let tx1 = Tx::new_with_id(1);
+        let tx2 = Tx::new_with_id(2);
+        let tx3 = Tx::new_with_id(3);
+        let x = Var::new(0);
+        let y = Var::new(0);
+
+        x.write(&tx1, 1);
+        y.write(&tx2, 2);
+
+        x.write(&tx2, 2);
+        y.write(&tx1, 1);
+
+        x.write(&tx3, 3);
+        y.write(&tx3, 3);
+
+        tx1.commit();
+        tx2.commit();
+        tx3.commit();
+
+        let tx4 = Tx::new_with_id(4);
+        let x1 = x.read(&tx4);
+        let y1 = y.read(&tx4);
+
+        assert_eq!((x1, y1), (3, 3));
+    }
+
+    #[test]
+    fn test_dirty_write_3() {
+        // Inverse case than test_dirty_write_2 - tx3 is before both tx1 and tx2. The (tx1, tx2)
+        // cycle wins, and tx2 is chosen because it's lexicographically highest.
+        let tx1 = Tx::new_with_id(1);
+        let tx2 = Tx::new_with_id(2);
+        let tx3 = Tx::new_with_id(3);
+        let x = Var::new(0);
+        let y = Var::new(0);
+
+        x.write(&tx3, 3);
+        y.write(&tx3, 3);
+
+        x.write(&tx1, 1);
+        y.write(&tx2, 2);
+
+        x.write(&tx2, 2);
+        y.write(&tx1, 1);
+
+        tx1.commit();
+        tx2.commit();
+        tx3.commit();
+
+        let tx4 = Tx::new_with_id(4);
+        let x1 = x.read(&tx4);
+        let y1 = y.read(&tx4);
+
+        assert_eq!((x1, y1), (2, 2));
+    }
+
+    #[test]
+    fn test_dirty_write_big_cycle() {
+        let tx1 = Tx::new_with_id(1);
+        let tx2 = Tx::new_with_id(2);
+        let tx3 = Tx::new_with_id(3);
+        let x = Var::new(0);
+        let y = Var::new(0);
+        let z = Var::new(0);
+
+        // tx1 -> tx2
+        x.write(&tx1, 1);
+        x.write(&tx2, 2);
+
+        // tx2 -> tx3
+        y.write(&tx2, 2);
+        y.write(&tx3, 3);
+
+        // tx3 -> tx1
+        z.write(&tx3, 3);
+        z.write(&tx1, 1);
+
+        tx1.commit();
+        tx2.commit();
+        tx3.commit();
+
+        let tx4 = Tx::new_with_id(4);
+        let x1 = x.read(&tx4);
+        let y1 = y.read(&tx4);
+        let z1 = z.read(&tx4);
+
+        assert_eq!((x1, y1, z1), (3, 3, 3));
     }
 }
