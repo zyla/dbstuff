@@ -1,0 +1,63 @@
+# Impossibility of serializable non-abortible interactive read transactions without central coordination
+
+(informal "proof")
+
+Suppose we want to implement a KV store with the following API:
+
+1. One-shot writes to single keys
+2. Interactive read-only transactions
+
+We want to provide strict serializability.
+
+We also want the following constraints:
+1. Not relying on real-time clocks for correctness.
+2. Not using a Timestamp Oracle either. (Why? Because it is a central resource which all transactions must contact. Also: it means an additional roundtrip at the start of a transaction.)
+3. Read transactions don't abort. (Why? Because they may be long running, and if they could be aborted by any write, then starvation would be almost guaranteed.)
+4. Writes don't block on read transactions. (Why? Because again - read transactions may be long running.). Writes may be, however, required to synchronously _notify_ a read transaction that a write has happened to ensure serializability.
+5. Keys may be stored on different servers. (Without loss of generality assume that each server stores only one key.)
+6. Reads and writes only contact the servers which store the accessed keys, and possibly the servers involved in concurrently running transactions which could be affected by them. (Why? It's trivial to implement the wanted semantics by notifying every server about every transaction, but it's not scalable.)
+
+Assume, for simplicity, that servers don't fail, and that each key is stored in only one copy on one server.
+
+Assume that all keys initially have value 0.
+
+Now consider the following scenario (steps are listed sequentially):
+
+```
+T1: begin(); read(x)
+T2: begin(); write(x, 1); commit()
+T3: begin(); write(y, 1); commit()
+T1: read(y); commit()
+```
+
+T2 happens before T3 in real time, so the legal serialization orders are:
+- T1 T2 T3 (T1 reads x=0, y=0)
+- T2 T1 T3 (T1 reads x=1, y=0)
+- T2 T3 T1 (T1 reads x=1, y=1)
+
+Note that it is not allowed for T1 to read x=0, y=1. That would mean that it observed T3, but failed to observe T2, which would create a causality cycle:
+- T1 depends on T3
+- T2 anti-depends on T1
+- T3 started after T2 committed
+
+What values could `T1` observe given the implementation constraints?
+
+- When T1 reads `x`, the writer transactions haven't even started. So it must read x=0.
+- When T2 writes `x`, it can even notice that there is a read transaction in progress which read x, and notify it before committing.
+- When T3 writes `y`, it can't know about the existence of T1. Why? Because T1 hasn't yet read `y`, which means it hasn't contacted the server which stores `y` yet.
+- When T1 reads `y`, it must decide whether it should observe T3. (i.e. whether to read the value T3 just wrote, or the previous one). It must satisfy the following constraints:
+  - If T3 committed before T1 started, then T1 should observe T3 (due to real-time constraints).
+  - But if T3 started after T2 committed, then T1 should not observe T3 (because it didn't observe T2).
+
+T1 doesn't have enough information to decide. Consider the following scenario:
+
+```
+T3: begin(); write(y, 1); commit()
+T1: begin(); read(x)
+T2: begin(); write(x, 1); commit()
+T1: read(y); commit()
+```
+
+It is indistinguishable from the first scenario from the point of view of T1, because whatever happens at the `y`-server happens independently from T1 and T2, until T1 reads `y`.
+
+To implement the correct semantics, we would have to obtain information about the relative real-time ordering betweeb T2 and T3. That would require writes which don't see any concurrently running read transaction to communicate with _some_ server such that any transaction which may read the same value in the future knows about the order of this write relative to others. Since when writing we don't know which transaction may read the value in the future, that would mean global coordination (communicating with either one central server, or the majority of all servers). This violates our constraint #6.
