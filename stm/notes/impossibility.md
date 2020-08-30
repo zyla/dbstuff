@@ -75,6 +75,6 @@ We could even formalize a consistency level between serializability and strict s
 
 ## Curiosities
 
-CockroachDB [appears to have the same problem](https://jepsen.io/analyses/cockroachdb-beta-20160829#comments) (also called "causal reverse" - see [CockroachDB’s Consistency Model](https://www.cockroachlabs.com/blog/consistency-model/), section "CockroachDB does not offer strict serializability"). This suggests that formalizing the not-quite-strict-serializability guarantees would be beneficial. Maybe someone has already done it?
+CockroachDB [appears to have the same problem](https://jepsen.io/analyses/cockroachdb-beta-20160829#comments) (also called "causal reverse" - see [CockroachDB’s Consistency Model](https://www.cockroachlabs.com/blog/consistency-model/), section "CockroachDB does not offer strict serializability"). This suggests that formalizing the not-quite-strict-serializability guarantees would be beneficial. ~~Maybe someone has already done it?~~ There's [an article by Daniel Abadi](https://fauna.com/blog/demystifying-database-systems-correctness-anomalies-under-serializable-isolation) which calls this "strong partitioned serializability".
 
 FaunaDB [claims to support strict serializability](https://fauna.com/blog/serializability-vs-strict-serializability-the-dirty-secret-of-database-isolation-levels), and in the article they acknowledge the causal reverse problem. They also claim not to rely on clock synchronization. I wonder how they do this.
