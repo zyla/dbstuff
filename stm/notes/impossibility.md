@@ -75,4 +75,4 @@ We could even formalize a consistency level between serializability and strict s
 
 ## Curiosities
 
-CockroachDB [appears to have the same problem](https://jepsen.io/analyses/cockroachdb-beta-20160829#comments). This suggests that formalizing the not-quite-strict-serializability guarantees would be beneficial. Maybe someone has already done it?
+CockroachDB [appears to have the same problem](https://jepsen.io/analyses/cockroachdb-beta-20160829#comments) (also called "causal reverse" - see [CockroachDB’s Consistency Model](https://www.cockroachlabs.com/blog/consistency-model/), section "CockroachDB does not offer strict serializability"). This suggests that formalizing the not-quite-strict-serializability guarantees would be beneficial. Maybe someone has already done it?
