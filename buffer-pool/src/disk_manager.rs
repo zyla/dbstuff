@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use tokio::prelude::*;
+use std::io;
 
 pub const PAGE_SIZE: usize = 4096;
 

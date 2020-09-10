@@ -1,6 +1,6 @@
 use crate::disk_manager::{DiskManager, PageData, PageId, PAGE_SIZE};
 use async_trait::async_trait;
-use tokio::prelude::*;
+use std::io;
 
 pub struct DiskManagerMem {
     pages: Vec<PageData>,

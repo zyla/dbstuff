@@ -1,11 +1,10 @@
-use tokio::prelude::*;
-
 use crate::disk_manager::*;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::ops::DerefMut;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use crate::sync::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::RwLock;
+use std::io;
 
 use bitvec::vec::BitVec;
 
