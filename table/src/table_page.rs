@@ -1,4 +1,4 @@
-use buffer_pool::disk_manager::{PageData, PAGE_SIZE};
+use buffer_pool::disk_manager::{PageData, PageId, INVALID_PAGE_ID, PAGE_SIZE};
 use std::ops::{Deref, DerefMut};
 
 pub struct TablePage<T> {
@@ -22,6 +22,7 @@ pub struct TablePage<T> {
 // ----------------------------------------------------------------
 //
 
+const OFFSET_NEXT_PAGE_ID: usize = 0x0c;
 const OFFSET_FREE_SPACE_PTR: usize = 0x10;
 const OFFSET_TUPLE_COUNT: usize = 0x14;
 const OFFSET_TUPLE_DESCRIPTORS: usize = 0x18;
@@ -57,8 +58,12 @@ impl<T: Deref<Target = PageData>> TablePage<T> {
         self.read_u32(OFFSET_FREE_SPACE_PTR) as usize
     }
 
-    fn get_tuple_count(&self) -> usize {
+    pub fn get_tuple_count(&self) -> usize {
         self.read_u32(OFFSET_TUPLE_COUNT) as usize
+    }
+
+    pub fn get_next_page_id(&self) -> PageId {
+        PageId(self.read_u32(OFFSET_NEXT_PAGE_ID) as usize)
     }
 
     #[allow(clippy::cast_ptr_alignment)]
@@ -79,6 +84,7 @@ impl<T: DerefMut<Target = PageData>> TablePage<T> {
         let mut page = TablePage { data };
         page.set_free_space_ptr(PAGE_SIZE as u32);
         page.set_tuple_count(0);
+        page.set_next_page_id(INVALID_PAGE_ID);
         page
     }
 
@@ -123,6 +129,10 @@ impl<T: DerefMut<Target = PageData>> TablePage<T> {
 
     fn set_tuple_count(&mut self, value: u32) {
         self.write_u32(OFFSET_TUPLE_COUNT, value);
+    }
+
+    pub fn set_next_page_id(&mut self, value: PageId) {
+        self.write_u32(OFFSET_NEXT_PAGE_ID, value.0 as u32)
     }
 
     fn set_tuple_descriptor(&mut self, index: usize, offset: u32, size: u32) {

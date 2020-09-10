@@ -115,6 +115,7 @@ impl BufferPool {
     }
 
     pub async fn get_page(&self, page_id: PageId) -> Result<PinnedPage<'_>> {
+        assert!(page_id.is_valid());
         let inner = self.lock.read().await;
         match inner.page_table.get(&page_id) {
             Some(&frame_id) => {

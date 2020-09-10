@@ -6,6 +6,14 @@ pub const PAGE_SIZE: usize = 4096;
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
 pub struct PageId(pub usize);
 
+pub const INVALID_PAGE_ID: PageId = PageId(0xffff_ffff_ffff_ffff);
+
+impl PageId {
+    pub fn is_valid(self) -> bool {
+        self != INVALID_PAGE_ID
+    }
+}
+
 pub type PageData = [u8; PAGE_SIZE];
 
 #[async_trait]
