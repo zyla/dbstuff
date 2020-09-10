@@ -36,7 +36,11 @@ pub enum Error {
     PageFull,
 }
 
+pub use Error::*;
+
 pub type Result<T> = std::result::Result<T, Error>;
+
+pub type SlotIndex = usize;
 
 impl<T: Deref<Target = PageData>> TablePage<T> {
     pub fn from_existing(data: T) -> Self {
@@ -62,6 +66,11 @@ impl<T: Deref<Target = PageData>> TablePage<T> {
         let ptr = self.data[offset..].as_ptr() as *const u32;
         unsafe { ptr.read_unaligned() }
     }
+
+    #[cfg(test)]
+    pub(crate) fn data(&self) -> &PageData {
+        &self.data
+    }
 }
 
 impl<T: DerefMut<Target = PageData>> TablePage<T> {
@@ -73,7 +82,7 @@ impl<T: DerefMut<Target = PageData>> TablePage<T> {
         page
     }
 
-    pub fn alloc_tuple(&mut self, size: usize) -> Result<&mut [u8]> {
+    pub fn alloc_tuple(&mut self, size: usize) -> Result<(SlotIndex, &mut [u8])> {
         if self.free_space() < size + SIZE_TUPLE_DESCRIPTOR {
             return Err(Error::PageFull);
         }
@@ -83,13 +92,29 @@ impl<T: DerefMut<Target = PageData>> TablePage<T> {
         self.set_free_space_ptr(start as u32);
         self.set_tuple_count((index + 1) as u32);
         self.set_tuple_descriptor(index, start as u32, (end - start) as u32);
-        Ok(&mut self.data[start..end])
+        Ok((index, &mut self.data[start..end]))
     }
 
-    pub fn insert_tuple<'a>(&mut self, tuple: &'a [u8]) -> Result<()> {
-        let new_tuple = self.alloc_tuple(tuple.len())?;
+    pub fn insert_tuple<'a>(&mut self, tuple: &'a [u8]) -> Result<SlotIndex> {
+        let (slot_index, new_tuple) = self.alloc_tuple(tuple.len())?;
         new_tuple.copy_from_slice(tuple);
-        Ok(())
+        Ok(slot_index)
+    }
+
+    pub fn get_tuple(&self, index: SlotIndex) -> Option<&[u8]> {
+        let (offset, size) = self.get_tuple_descriptor(index);
+        if offset == 0 {
+            return None;
+        }
+        Some(&self.data[offset..offset + size])
+    }
+
+    pub fn get_tuple_mut(&mut self, index: SlotIndex) -> Option<&mut [u8]> {
+        let (offset, size) = self.get_tuple_descriptor(index);
+        if offset == 0 {
+            return None;
+        }
+        Some(&mut self.data[offset..offset + size])
     }
 
     fn set_free_space_ptr(&mut self, value: u32) {
@@ -109,6 +134,17 @@ impl<T: DerefMut<Target = PageData>> TablePage<T> {
             OFFSET_TUPLE_DESCRIPTORS + SIZE_TUPLE_DESCRIPTOR * index + OFFSET_TUPLE_SIZE,
             size,
         );
+    }
+
+    fn get_tuple_descriptor(&self, index: usize) -> (usize, usize) {
+        (
+            self.read_u32(
+                OFFSET_TUPLE_DESCRIPTORS + SIZE_TUPLE_DESCRIPTOR * index + OFFSET_TUPLE_OFFSET,
+            ) as usize,
+            self.read_u32(
+                OFFSET_TUPLE_DESCRIPTORS + SIZE_TUPLE_DESCRIPTOR * index + OFFSET_TUPLE_SIZE,
+            ) as usize,
+        )
     }
 
     #[allow(clippy::cast_ptr_alignment)]
