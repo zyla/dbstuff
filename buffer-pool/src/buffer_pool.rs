@@ -1,5 +1,3 @@
-#![cfg(not(loom))]
-
 use tokio::prelude::*;
 
 use crate::disk_manager::*;
@@ -54,7 +52,7 @@ pub struct BufferPool {
 }
 
 struct BufferPoolInner {
-    disk_manager: DiskManager,
+    disk_manager: Box<dyn DiskManager + Send>,
     page_table: HashMap<PageId, FrameId>,
     free_frames: Vec<FrameId>,
     ref_flag: BitVec,
@@ -92,7 +90,7 @@ impl PinnedPage<'_> {
 }
 
 impl BufferPool {
-    pub fn new(disk_manager: DiskManager, capacity: usize) -> BufferPool {
+    pub fn new(disk_manager: Box<dyn DiskManager + Send>, capacity: usize) -> BufferPool {
         let mut frames = Vec::with_capacity(capacity);
         let mut free_frames = Vec::with_capacity(capacity);
         for i in 0..capacity {
