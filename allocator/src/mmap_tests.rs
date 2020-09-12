@@ -1,5 +1,5 @@
+use mmap::{MapOption::*, MemoryMap};
 use std::ptr;
-use mmap::{MemoryMap, MapOption::*};
 
 /// Returns RSS of current process in bytes.
 /// Assumes current page size is 4k.
@@ -21,7 +21,7 @@ fn alloc_big_chunk_no_commit() {
 fn commit_some() {
     let m = MemoryMap::new(BIG, &[MapReadable, MapWritable]).unwrap();
     const N: usize = 16 * 1024 * 1024;
-    for i in 0..(N/PAGE_SIZE) {
+    for i in 0..(N / PAGE_SIZE) {
         unsafe {
             ptr::write(m.data().offset((i * PAGE_SIZE) as isize), 1);
         }
@@ -34,7 +34,7 @@ fn commit_some() {
 fn read_does_not_commit_and_returns_0() {
     let m = MemoryMap::new(BIG, &[MapReadable, MapWritable]).unwrap();
     const N: usize = 10 * 1024 * 1024;
-    for i in 0..(N/PAGE_SIZE) {
+    for i in 0..(N / PAGE_SIZE) {
         unsafe {
             assert_eq!(ptr::read(m.data().offset((i * PAGE_SIZE) as isize)), 0);
         }
