@@ -7,7 +7,7 @@ use std::thread;
 #[bench]
 fn send_recv_unbounded(b: &mut test::bench::Bencher) {
     b.iter(|| {
-        let (tx, rx) = mpsc::channel();
+        let (tx, mut rx) = mpsc::channel();
         std::thread::spawn(move || {
             for i in 1..=1000 {
                 tx.send(i);
@@ -20,7 +20,7 @@ fn send_recv_unbounded(b: &mut test::bench::Bencher) {
 #[bench]
 fn send_recv_bounded(b: &mut test::bench::Bencher) {
     b.iter(|| {
-        let (tx, rx) = mpsc::bounded_channel(100);
+        let (tx, mut rx) = mpsc::bounded_channel(100);
         std::thread::spawn(move || {
             for i in 1..=1000 {
                 tx.send(i);

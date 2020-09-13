@@ -24,33 +24,37 @@ impl<T> Sender<T> {
 
 pub struct Receiver<T> {
     chan: Arc<Chan<T>>,
+    data: VecDeque<T>,
 }
 
 impl<T> Receiver<T> {
-    pub fn try_recv(&self) -> Option<T> {
+    pub fn try_recv(&mut self) -> Option<T> {
         self.recv_impl(false)
     }
 
-    pub fn recv(&self) -> T {
+    pub fn recv(&mut self) -> T {
         self.recv_impl(true).unwrap()
     }
 
-    pub fn recv_impl(&self, wait: bool) -> Option<T> {
+    pub fn recv_impl(&mut self, wait: bool) -> Option<T> {
+        if let Some(x) = self.data.pop_front() {
+            return Some(x);
+        }
         let mut chan = self.chan.mu.lock().unwrap();
-        loop {
-            if let Some(x) = chan.data.pop_front() {
-                if let Some(cap) = self.chan.capacity {
-                    if chan.data.len() + 1 == cap {
-                        self.chan.not_full.notify_one();
-                    }
-                }
-                return Some(x);
-            }
+        while chan.data.is_empty() {
             if !wait {
                 return None;
             }
             chan = self.chan.not_empty.wait(chan).unwrap();
         }
+        std::mem::swap(&mut chan.data, &mut self.data);
+        drop(chan);
+        if let Some(cap) = self.chan.capacity {
+            if self.data.len() == cap {
+                self.chan.not_full.notify_one();
+            }
+        }
+        self.data.pop_front()
     }
 }
 
@@ -79,7 +83,10 @@ fn channel_with_capacity<T>(capacity: Option<usize>) -> (Sender<T>, Receiver<T>)
         capacity,
     });
     let sender = Sender { chan: chan.clone() };
-    let receiver = Receiver { chan };
+    let receiver = Receiver {
+        chan,
+        data: Default::default(),
+    };
     (sender, receiver)
 }
 
@@ -93,7 +100,7 @@ mod single_threaded_tests {
 
     #[test]
     fn send_and_try_recv() {
-        let (tx, rx) = channel();
+        let (tx, mut rx) = channel();
         tx.send(42);
         assert_eq!(rx.try_recv(), Some(42));
     }
@@ -108,7 +115,7 @@ mod loom_concurrent_tests {
     #[test]
     fn send_and_try_recv() {
         let results = collect_all_outcomes(|| {
-            let (tx, rx) = channel();
+            let (tx, mut rx) = channel();
             thread::spawn(move || tx.send(42));
             rx.try_recv()
         });
@@ -118,7 +125,7 @@ mod loom_concurrent_tests {
     #[test]
     fn send_and_recv() {
         loom::model(|| {
-            let (tx, rx) = channel();
+            let (tx, mut rx) = channel();
             thread::spawn(move || tx.send(42));
             assert_eq!(rx.recv(), 42);
         });
@@ -127,7 +134,7 @@ mod loom_concurrent_tests {
     #[test]
     fn two_sends_and_recv() {
         let results = collect_all_outcomes(|| {
-            let (tx, rx) = channel();
+            let (tx, mut rx) = channel();
             let tx2 = tx.clone();
             thread::spawn(move || tx.send(42));
             thread::spawn(move || tx2.send(100));
@@ -139,7 +146,7 @@ mod loom_concurrent_tests {
     #[test]
     fn bounded_two_sends_and_recv() {
         let results = collect_all_outcomes(|| {
-            let (tx, rx) = bounded_channel(1);
+            let (tx, mut rx) = bounded_channel(1);
             let tx2 = tx.clone();
             thread::spawn(move || tx.send(42));
             thread::spawn(move || tx2.send(100));
