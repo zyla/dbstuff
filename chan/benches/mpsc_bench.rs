@@ -2,7 +2,6 @@
 extern crate test;
 
 use ::chan::mpsc;
-use std::thread;
 
 #[bench]
 fn send_recv_unbounded(b: &mut test::bench::Bencher) {
