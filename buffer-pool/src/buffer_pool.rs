@@ -1,10 +1,11 @@
 use crate::disk_manager::*;
-use crate::sync::{AtomicBool, AtomicUsize, Ordering};
+use crate::sync::{AtomicBool, AtomicUsize, Ordering::*};
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::io;
-use std::ops::DerefMut;
-use tokio::sync::RwLock;
+use std::ops::{Deref, DerefMut};
+use tokio::sync::{RwLock, RwLockReadGuard};
+use std::mem;
 
 use bitvec::vec::BitVec;
 
@@ -27,6 +28,12 @@ pub struct Page {
     dirty: AtomicBool,
     pin_count: AtomicUsize,
     data: RwLock<PageData>,
+}
+
+impl Page {
+    fn dirty(&self) {
+        self.dirty.store(true, SeqCst);
+    }
 }
 
 // SAFETY: We're protecting the UnsafeCell inside Page by the combination of
@@ -65,26 +72,72 @@ pub struct PinnedPage<'a> {
 
 impl<'a> Drop for PinnedPage<'a> {
     fn drop(&mut self) {
-        self.page.pin_count.fetch_sub(1, Ordering::SeqCst);
+        self.page.pin_count.fetch_sub(1, SeqCst);
     }
 }
 
-impl PinnedPage<'_> {
+impl<'a> PinnedPage<'a> {
     pub fn id(&self) -> PageId {
         // SAFETY: The page is pinned, so the buffer pool is not switching it to a different one
         unsafe { *self.page.id.get() }
     }
 
     pub fn dirty(&self) {
-        self.page.dirty.store(true, Ordering::SeqCst);
+        self.page.dirty()
     }
 
     pub fn pin_count(&self) -> usize {
-        self.page.pin_count.load(Ordering::SeqCst)
+        self.page.pin_count.load(SeqCst)
     }
 
     pub fn data(&self) -> &RwLock<PageData> {
         &self.page.data
+    }
+
+    /// Lock the page data in read (shared) mode.
+    /// The returned guard will unpin the page when dropped.
+    pub async fn read(self) -> PinnedPageReadGuard<'a> {
+        let guard = PinnedPageReadGuard {
+            page: self.page,
+            guard: self.page.data.read().await,
+        };
+        // Avoid double-unpin
+        mem::forget(self);
+        guard
+    }
+}
+
+pub struct PinnedPageReadGuard<'a> {
+    page: &'a Page,
+    guard: RwLockReadGuard<'a, PageData>,
+}
+
+impl<'a> PinnedPageReadGuard<'a> {
+    pub fn id(&self) -> PageId {
+        // SAFETY: The page is pinned, so the buffer pool is not switching it to a different one
+        unsafe { *self.page.id.get() }
+    }
+
+    pub fn dirty(&self) {
+        self.page.dirty()
+    }
+}
+
+impl<'a> Deref for PinnedPageReadGuard<'a> {
+    type Target = PageData;
+
+    fn deref(&self) -> &Self::Target {
+        self.guard.deref()
+    }
+}
+
+impl<'a> Drop for PinnedPageReadGuard<'a> {
+    fn drop(&mut self) {
+        // FIXME: We should make sure that we don't access the guard after we unpin the page -
+        // otherwise it can be concurrently reused!
+        // The following doesn't compile, figure out a way to do this.
+        // drop(self.guard);
+        self.page.pin_count.fetch_sub(1, SeqCst);
     }
 }
 
@@ -94,7 +147,7 @@ impl BufferPool {
         let mut free_frames = Vec::with_capacity(capacity);
         for i in 0..capacity {
             frames.push(Page {
-                id: UnsafeCell::new(PageId(std::usize::MAX)),
+                id: UnsafeCell::new(PageId::invalid()),
                 dirty: AtomicBool::default(),
                 pin_count: AtomicUsize::default(),
                 data: RwLock::new([0; PAGE_SIZE]),
@@ -114,13 +167,15 @@ impl BufferPool {
         }
     }
 
+    // FIXME: giving out references with arbitrary lifetime is unsafe - the page goes away when we
+    // drop the buffer pool!
     pub async fn get_page(&self, page_id: PageId) -> Result<PinnedPage<'_>> {
         assert!(page_id.is_valid());
         let inner = self.lock.read().await;
         match inner.page_table.get(&page_id) {
             Some(&frame_id) => {
                 let page = &self.frames[frame_id];
-                let old_pin_count = page.pin_count.fetch_add(1, Ordering::SeqCst);
+                let old_pin_count = page.pin_count.fetch_add(1, SeqCst);
 
                 if old_pin_count == 0 {
                     drop(inner);
@@ -143,7 +198,7 @@ impl BufferPool {
                 // in which case we're done.
                 if let Some(&frame_id) = inner.page_table.get(&page_id) {
                     let page = &self.frames[frame_id];
-                    let old_pin_count = page.pin_count.fetch_add(1, Ordering::SeqCst);
+                    let old_pin_count = page.pin_count.fetch_add(1, SeqCst);
 
                     if old_pin_count == 0 {
                         inner.ref_flag.set(frame_id, true);
@@ -161,8 +216,8 @@ impl BufferPool {
                 unsafe {
                     page.id.get().write(page_id);
                 }
-                page.dirty.store(false, Ordering::SeqCst);
-                page.pin_count.store(1, Ordering::SeqCst);
+                page.dirty.store(false, SeqCst);
+                page.pin_count.store(1, SeqCst);
 
                 // TODO: Should we still hold the lock while we're doing IO?
                 // A: Yes, but maybe a different one? (we shouldn't block reading existing tables,
@@ -198,8 +253,8 @@ impl BufferPool {
         unsafe {
             page.id.get().write(page_id);
         }
-        page.dirty.store(false, Ordering::SeqCst);
-        page.pin_count.store(1, Ordering::SeqCst);
+        page.dirty.store(false, SeqCst);
+        page.pin_count.store(1, SeqCst);
 
         // Zero-fill the newly created page
         let mut data = page.data.write().await; // FIXME: we have exclusive access, shouldn't have to lock
@@ -222,14 +277,14 @@ impl BufferPool {
                 // - find_victim returns only frames with pin_count == 0
                 // - we're still holding buffer pool lock
                 let page_id = unsafe { *page.id.get() };
-                unsafe { page.id.get().write(PageId(std::usize::MAX)) }
+                unsafe { page.id.get().write(PageId::invalid()) }
 
                 inner.page_table.remove(&page_id);
 
-                if page.dirty.load(Ordering::SeqCst) {
+                if page.dirty.load(SeqCst) {
                     let data = page.data.read().await; // FIXME: we have exclusive access, shouldn't have to lock
                     inner.disk_manager.write_page(page_id, &data).await?;
-                    page.dirty.store(false, Ordering::SeqCst);
+                    page.dirty.store(false, SeqCst);
                 }
 
                 Ok(frame_id)
@@ -245,7 +300,7 @@ impl BufferPool {
         while i < self.capacity * 2 {
             if self.frames[inner.clock_hand]
                 .pin_count
-                .load(Ordering::SeqCst)
+                .load(SeqCst)
                 == 0
             {
                 if inner.ref_flag.get(inner.clock_hand) == Some(&true) {
@@ -262,5 +317,12 @@ impl BufferPool {
         }
 
         Err(Error::NoFreeFrames)
+    }
+
+    pub unsafe fn dump_state(&self) {
+        println!("=== BUFFER POOL ===");
+        for (index, frame) in self.frames.iter().enumerate() {
+            println!("Frame {}: {:?} dirty={} pin_count={}", index, *frame.id.get(), frame.dirty.load(SeqCst), frame.pin_count.load(SeqCst));
+        }
     }
 }
