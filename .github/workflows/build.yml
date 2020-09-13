@@ -43,6 +43,28 @@ jobs:
       - name: Run cargo test
         run: cd $CRATE && cargo test --color always --all
 
+  test-chan:
+    name: test-chan
+    runs-on: ubuntu-latest
+    env:
+      CRATE: chan
+    steps:
+      - uses: actions/checkout@v2
+      - run: git submodule update --init
+
+      # Ensure that all components all compilable.
+      - name: Run cargo check for all targets
+        run: cd $CRATE && cargo check --color always --all --all-targets
+
+      - name: Run cargo test
+        run: cd $CRATE && cargo test --color always --all
+
+      - name: Run cargo bench
+        run: cd $CRATE && cargo bench --color always
+
+      - name: Run cargo test with cfg(loom)
+        run: cd $CRATE && RUSTFLAGS='--cfg loom --cfg loom_nightly' cargo test --color always --lib
+
   test-db:
     name: test-db
     runs-on: ubuntu-latest
