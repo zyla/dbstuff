@@ -3,9 +3,9 @@ use crate::sync::{AtomicBool, AtomicUsize, Ordering::*};
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::io;
+use std::mem;
 use std::ops::{Deref, DerefMut};
 use tokio::sync::{RwLock, RwLockReadGuard};
-use std::mem;
 
 use bitvec::vec::BitVec;
 
@@ -298,11 +298,7 @@ impl BufferPool {
         // On the second pass we're guaranteed to get a page, since we unrefed them all in the first pass.
         let mut i = 0;
         while i < self.capacity * 2 {
-            if self.frames[inner.clock_hand]
-                .pin_count
-                .load(SeqCst)
-                == 0
-            {
+            if self.frames[inner.clock_hand].pin_count.load(SeqCst) == 0 {
                 if inner.ref_flag.get(inner.clock_hand) == Some(&true) {
                     //                    println!("find_victim: unref {}", inner.clock_hand);
                     inner.ref_flag.set(inner.clock_hand, false);
@@ -319,10 +315,19 @@ impl BufferPool {
         Err(Error::NoFreeFrames)
     }
 
-    pub unsafe fn dump_state(&self) {
+    pub fn dump_state(&mut self) {
         println!("=== BUFFER POOL ===");
-        for (index, frame) in self.frames.iter().enumerate() {
-            println!("Frame {}: {:?} dirty={} pin_count={}", index, *frame.id.get(), frame.dirty.load(SeqCst), frame.pin_count.load(SeqCst));
+        for (index, page) in self.frames.iter().enumerate() {
+            // SAFETY: dump_state takes a &mut reference to the buffer pool, which means no one
+            // has any pinned pages
+            let page_id = unsafe { *page.id.get() };
+            println!(
+                "Frame {}: {:?} dirty={} pin_count={}",
+                index,
+                page_id,
+                page.dirty.load(SeqCst),
+                page.pin_count.load(SeqCst)
+            );
         }
     }
 }

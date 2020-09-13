@@ -1,7 +1,9 @@
-use crate::hexdump::pretty_hex;
-use crate::table_page;
-use crate::table_heap::{TableHeap};
-use buffer_pool::{disk_manager_mem::DiskManagerMem, disk_manager::PageId, buffer_pool::{Result, BufferPool}};
+use crate::table_heap::TableHeap;
+
+use buffer_pool::{
+    buffer_pool::{BufferPool, Result},
+    disk_manager_mem::DiskManagerMem,
+};
 
 #[tokio::test]
 async fn insert_and_get() -> Result<()> {
@@ -19,7 +21,9 @@ async fn insert_many_and_iter() -> Result<()> {
     const N_PAGES: usize = 10;
     let mut n_tuples: usize = 0;
     loop {
-        let tid = table.insert_tuple(format!("Tuple tuple {}", n_tuples).as_bytes()).await?;
+        let tid = table
+            .insert_tuple(format!("Tuple tuple {}", n_tuples).as_bytes())
+            .await?;
         n_tuples += 1;
         if tid.1 >= N_PAGES {
             break;

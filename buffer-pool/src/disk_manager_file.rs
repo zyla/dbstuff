@@ -2,10 +2,10 @@
 
 use crate::disk_manager::{DiskManager, PageData, PageId, PAGE_SIZE};
 use async_trait::async_trait;
+use std::convert::TryInto;
 use std::path::Path;
 use tokio::fs;
 use tokio::prelude::*;
-use std::convert::TryInto;
 
 pub struct DiskManagerFile {
     file: fs::File,
@@ -32,14 +32,18 @@ impl DiskManagerFile {
 impl DiskManager for DiskManagerFile {
     async fn write_page(&mut self, page_id: PageId, data: &PageData) -> io::Result<()> {
         self.file
-            .seek(std::io::SeekFrom::Start((page_id.0 as usize * PAGE_SIZE) as u64))
+            .seek(std::io::SeekFrom::Start(
+                (page_id.0 as usize * PAGE_SIZE) as u64,
+            ))
             .await?;
         self.file.write_all(data).await
     }
 
     async fn read_page(&mut self, page_id: PageId, data: &mut PageData) -> io::Result<()> {
         self.file
-            .seek(std::io::SeekFrom::Start((page_id.0 as usize * PAGE_SIZE) as u64))
+            .seek(std::io::SeekFrom::Start(
+                (page_id.0 as usize * PAGE_SIZE) as u64,
+            ))
             .await?;
         self.file.read_exact(data).await?;
         Ok(())

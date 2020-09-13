@@ -1,9 +1,8 @@
 use crate::table_page;
-use buffer_pool::buffer_pool::{BufferPool, Result, PinnedPage, PinnedPageReadGuard};
-use buffer_pool::disk_manager::{PageId, PageData};
-use table_page::{SlotIndex, TablePage};
+use buffer_pool::buffer_pool::{BufferPool, PinnedPageReadGuard, Result};
+use buffer_pool::disk_manager::PageId;
 use std::ops::Deref;
-use tokio::sync::{RwLockWriteGuard};
+use table_page::{SlotIndex, TablePage};
 
 pub type TupleId = (PageId, SlotIndex);
 
@@ -68,7 +67,9 @@ impl<'b> TableHeap<'b> {
     }
 
     pub async fn get_tuple(&self, tid: TupleId) -> Result<TupleReadGuard<'_>> {
-        Ok(TupleReadGuard { iter: self.iter_at(tid).await? })
+        Ok(TupleReadGuard {
+            iter: self.iter_at(tid).await?,
+        })
     }
 
     async fn iter_at(&self, tid: TupleId) -> Result<TableIter<'_>> {
@@ -103,18 +104,24 @@ impl<'b> TableIter<'b> {
         }
         let slot_index = self.slot_index;
         self.slot_index += 1;
-        Ok(Some(((self.page.unwrap().id(), slot_index), self.page.get_tuple(slot_index).expect("invalid slot index"))))
+        Ok(Some((
+            (self.page.unwrap().id(), slot_index),
+            self.page.get_tuple(slot_index).expect("invalid slot index"),
+        )))
     }
 }
 
 pub struct TupleReadGuard<'b> {
-    iter: TableIter<'b>
+    iter: TableIter<'b>,
 }
 
 impl Deref for TupleReadGuard<'_> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
-        self.iter.page.get_tuple(self.iter.slot_index).expect("invalid slot index")
+        self.iter
+            .page
+            .get_tuple(self.iter.slot_index)
+            .expect("invalid slot index")
     }
 }
