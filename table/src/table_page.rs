@@ -48,6 +48,10 @@ impl<T: Deref<Target = PageData>> TablePage<T> {
         TablePage { data }
     }
 
+    pub fn unwrap(&self) -> &T {
+        &self.data
+    }
+
     pub fn free_space(&self) -> usize {
         self.get_free_space_ptr()
             - OFFSET_TUPLE_DESCRIPTORS
@@ -63,7 +67,26 @@ impl<T: Deref<Target = PageData>> TablePage<T> {
     }
 
     pub fn get_next_page_id(&self) -> PageId {
-        PageId(self.read_u32(OFFSET_NEXT_PAGE_ID) as usize)
+        PageId(self.read_u32(OFFSET_NEXT_PAGE_ID))
+    }
+
+    pub fn get_tuple(&self, index: SlotIndex) -> Option<&[u8]> {
+        let (offset, size) = self.get_tuple_descriptor(index);
+        if offset == 0 {
+            return None;
+        }
+        Some(&self.data[offset..offset + size])
+    }
+
+    fn get_tuple_descriptor(&self, index: usize) -> (usize, usize) {
+        (
+            self.read_u32(
+                OFFSET_TUPLE_DESCRIPTORS + SIZE_TUPLE_DESCRIPTOR * index + OFFSET_TUPLE_OFFSET,
+            ) as usize,
+            self.read_u32(
+                OFFSET_TUPLE_DESCRIPTORS + SIZE_TUPLE_DESCRIPTOR * index + OFFSET_TUPLE_SIZE,
+            ) as usize,
+        )
     }
 
     #[allow(clippy::cast_ptr_alignment)]
@@ -107,14 +130,6 @@ impl<T: DerefMut<Target = PageData>> TablePage<T> {
         Ok(slot_index)
     }
 
-    pub fn get_tuple(&self, index: SlotIndex) -> Option<&[u8]> {
-        let (offset, size) = self.get_tuple_descriptor(index);
-        if offset == 0 {
-            return None;
-        }
-        Some(&self.data[offset..offset + size])
-    }
-
     pub fn get_tuple_mut(&mut self, index: SlotIndex) -> Option<&mut [u8]> {
         let (offset, size) = self.get_tuple_descriptor(index);
         if offset == 0 {
@@ -144,17 +159,6 @@ impl<T: DerefMut<Target = PageData>> TablePage<T> {
             OFFSET_TUPLE_DESCRIPTORS + SIZE_TUPLE_DESCRIPTOR * index + OFFSET_TUPLE_SIZE,
             size,
         );
-    }
-
-    fn get_tuple_descriptor(&self, index: usize) -> (usize, usize) {
-        (
-            self.read_u32(
-                OFFSET_TUPLE_DESCRIPTORS + SIZE_TUPLE_DESCRIPTOR * index + OFFSET_TUPLE_OFFSET,
-            ) as usize,
-            self.read_u32(
-                OFFSET_TUPLE_DESCRIPTORS + SIZE_TUPLE_DESCRIPTOR * index + OFFSET_TUPLE_SIZE,
-            ) as usize,
-        )
     }
 
     #[allow(clippy::cast_ptr_alignment)]

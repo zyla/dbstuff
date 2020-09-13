@@ -1,7 +1,11 @@
 use crate::table_page;
-use buffer_pool::buffer_pool::{BufferPool, Result};
-use buffer_pool::disk_manager::PageId;
+use buffer_pool::buffer_pool::{BufferPool, Result, PinnedPage, PinnedPageReadGuard};
+use buffer_pool::disk_manager::{PageId, PageData};
 use table_page::{SlotIndex, TablePage};
+use std::ops::Deref;
+use tokio::sync::{RwLockWriteGuard};
+
+pub type TupleId = (PageId, SlotIndex);
 
 pub struct TableHeap<'b> {
     buffer_pool: &'b BufferPool,
@@ -27,7 +31,7 @@ impl<'b> TableHeap<'b> {
         })
     }
 
-    pub async fn insert_tuple<'a>(&self, tuple: &'a [u8]) -> Result<(PageId, SlotIndex)> {
+    pub async fn insert_tuple<'a>(&self, tuple: &'a [u8]) -> Result<TupleId> {
         let mut page_id = self.first_page_id;
         loop {
             let page = self.buffer_pool.get_page(page_id).await?;
@@ -45,7 +49,7 @@ impl<'b> TableHeap<'b> {
                         table_page.set_next_page_id(new_page.id());
                         page.dirty();
                         drop(table_page);
-                        drop(page);
+                        drop(page); // FIXME: this is wrong, we're publishing an uninitialized page!
 
                         let mut new_table_page = TablePage::new(new_page.data().write().await);
                         let slot_index = new_table_page
@@ -57,5 +61,60 @@ impl<'b> TableHeap<'b> {
                 }
             }
         }
+    }
+
+    pub async fn iter(&self) -> Result<TableIter<'_>> {
+        self.iter_at((self.first_page_id, 0)).await
+    }
+
+    pub async fn get_tuple(&self, tid: TupleId) -> Result<TupleReadGuard<'_>> {
+        Ok(TupleReadGuard { iter: self.iter_at(tid).await? })
+    }
+
+    async fn iter_at(&self, tid: TupleId) -> Result<TableIter<'_>> {
+        Ok(TableIter {
+            table: self,
+            slot_index: tid.1,
+            page: self.read_page(tid.0).await?,
+        })
+    }
+
+    async fn read_page(&self, page_id: PageId) -> Result<TablePage<PinnedPageReadGuard<'b>>> {
+        let page = self.buffer_pool.get_page(page_id).await?;
+        Ok(TablePage::from_existing(page.read().await))
+    }
+}
+
+pub struct TableIter<'b> {
+    table: &'b TableHeap<'b>,
+    slot_index: SlotIndex,
+    page: TablePage<PinnedPageReadGuard<'b>>,
+}
+
+impl<'b> TableIter<'b> {
+    pub async fn next<'t>(&'t mut self) -> Result<Option<(TupleId, &'t [u8])>> {
+        while self.slot_index >= self.page.get_tuple_count() {
+            let next = self.page.get_next_page_id();
+            if !next.is_valid() {
+                return Ok(None);
+            }
+            self.page = self.table.read_page(next).await?;
+            self.slot_index = 0;
+        }
+        let slot_index = self.slot_index;
+        self.slot_index += 1;
+        Ok(Some(((self.page.unwrap().id(), slot_index), self.page.get_tuple(slot_index).expect("invalid slot index"))))
+    }
+}
+
+pub struct TupleReadGuard<'b> {
+    iter: TableIter<'b>
+}
+
+impl Deref for TupleReadGuard<'_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.iter.page.get_tuple(self.iter.slot_index).expect("invalid slot index")
     }
 }
