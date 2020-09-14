@@ -1,9 +1,7 @@
 #![feature(test)]
+#![allow(non_upper_case_globals)]
 
-#[macro_use]
-extern crate assert_matches;
 extern crate rand;
-
 extern crate test;
 
 use ::buffer_pool::buffer_pool::*;
@@ -12,9 +10,8 @@ use ::buffer_pool::disk_manager_mem::*;
 
 use rand::{Rng, SeedableRng};
 
+use std::convert::TryInto;
 use std::sync::Arc;
-
-use tokio::prelude::*;
 
 #[allow(soft_unstable)]
 #[bench]
@@ -60,10 +57,11 @@ fn multithreaded_single_pin_per_thread_bench(b: &mut test::bench::Bencher) {
                         }
 
                         for _i in 0..1000usize {
-                            let page_id = PageId(rng.gen_range(0, pinned_pages.len()));
+                            let page_id =
+                                PageId(rng.gen_range(0, pinned_pages.len()).try_into().unwrap());
                             let mut page_to_save: Option<PinnedPage> = None;
                             let (page, should_unpin): (&PinnedPage, bool) =
-                                match &pinned_pages[page_id.0] {
+                                match &pinned_pages[page_id.0 as usize] {
                                     None => {
                                         if num_pinned_pages(&pinned_pages) >= max_pins_per_thread {
                                             continue;
@@ -80,20 +78,21 @@ fn multithreaded_single_pin_per_thread_bench(b: &mut test::bench::Bencher) {
 
                             //                    println!("Reading {:?}", page_id);
                             let value = page.data().read().await[thread_id];
-                            assert_eq!(value, values[page_id.0]);
+                            assert_eq!(value, values[page_id.0 as usize]);
 
                             if rng.gen() {
                                 //                        println!("Writing to {:?}", page_id);
-                                values[page_id.0] = values[page_id.0].wrapping_add(1);
-                                page.data().write().await[thread_id] = values[page_id.0];
+                                values[page_id.0 as usize] =
+                                    values[page_id.0 as usize].wrapping_add(1);
+                                page.data().write().await[thread_id] = values[page_id.0 as usize];
                                 page.dirty();
                             }
 
                             if should_unpin {
                                 //                        println!("Unpinning {:?}", page_id);
-                                pinned_pages[page_id.0] = None;
+                                pinned_pages[page_id.0 as usize] = None;
                             } else {
-                                pinned_pages[page_id.0] = page_to_save;
+                                pinned_pages[page_id.0 as usize] = page_to_save;
                             }
                         }
 
