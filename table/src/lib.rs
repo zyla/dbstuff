@@ -11,3 +11,7 @@ mod hexdump;
 mod table_heap_tests;
 #[cfg(test)]
 mod table_page_tests;
+
+pub mod datum;
+#[cfg(test)]
+pub mod datum_serialization_tests;
