@@ -53,7 +53,32 @@ proptest! {
         let n = if d == Datum::Null { Nullable } else { n0 };
         let mut w = datum::serialize::Writer::new();
         d.serialize(&mut w, n);
-        let d2 = Datum::deserialize(&mut datum::serialize::Reader::new(w.data()), n, d.ty().unwrap_or(Type::Bool));
+        let d2 = Datum::deserialize(
+            &mut datum::serialize::Reader::new(w.data()),
+            n,
+            d.ty().unwrap_or(Type::Bool),
+        );
         prop_assert_eq!(&d, &d2, "n={:?}, ty={:?}", n, d.ty());
+    }
+
+    #[test]
+    fn roundtrip_many(tuple: Vec<(Datum, Nullability)>) {
+        let mut w = datum::serialize::Writer::new();
+        for (d, n0) in &tuple {
+            let n = if *d == Datum::Null { Nullable } else { *n0 };
+            d.serialize(&mut w, n);
+        }
+        let mut reader = datum::serialize::Reader::new(w.data());
+        let tuple2 = tuple
+            .iter()
+            .map(|(d, n0)| {
+                let n = if *d == Datum::Null { Nullable } else { *n0 };
+                (
+                    Datum::deserialize(&mut reader, n, d.ty().unwrap_or(Type::Bool)),
+                    *n0,
+                )
+            })
+            .collect::<Vec<_>>();
+        prop_assert_eq!(&tuple, &tuple2);
     }
 }
