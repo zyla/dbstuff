@@ -1,41 +1,51 @@
-#[derive(Debug, PartialEq, Eq)]
+// Clippy seems to have some bug triggered by derive(Arbitrary)
+#![allow(clippy::unit_arg)]
+
+use proptest_derive::Arbitrary;
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Arbitrary)]
 pub enum Type {
     String,
     Int8,
     Bool,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct NType {
-    pub nullable: bool,
-    pub ty: Type,
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Arbitrary)]
+pub enum Nullability {
+    Nullable,
+    NotNull,
 }
 
-impl NType {
-    pub fn nullable(ty: Type) -> Self {
-        Self { nullable: true, ty }
-    }
+pub use Nullability::*;
 
-    pub fn not_null(ty: Type) -> Self {
-        Self { nullable: false, ty }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Arbitrary)]
 pub enum Datum {
     String(String),
     Int8(i64),
     Bool(bool),
-    Null
+    Null,
+}
+
+impl Datum {
+    /// Returns the type of the datum,
+    /// or None if the datum is Null.
+    pub fn ty(&self) -> Option<Type> {
+        match self {
+            Datum::String(_) => Some(Type::String),
+            Datum::Int8(_) => Some(Type::Int8),
+            Datum::Bool(_) => Some(Type::Bool),
+            Datum::Null => None,
+        }
+    }
 }
 
 pub mod serialize {
-    use super::{Datum, Type, NType};
-    use std::{slice, mem};
+    use super::*;
+    use std::{mem, slice};
 
     pub struct Reader<'a> {
         data: &'a [u8],
-        offset: usize
+        offset: usize,
     }
 
     impl<'a> Reader<'a> {
@@ -54,7 +64,7 @@ pub mod serialize {
         #[allow(clippy::cast_ptr_alignment)]
         unsafe fn read<T: Copy>(&mut self) -> T {
             let len = mem::size_of::<T>();
-            let ptr = self.data[self.offset..self.offset+len].as_ptr() as *const T;
+            let ptr = self.data[self.offset..self.offset + len].as_ptr() as *const T;
             self.advance(len);
             ptr.read_unaligned()
         }
@@ -72,14 +82,20 @@ pub mod serialize {
         }
 
         pub fn read_bytes(&mut self, len: usize) -> &'a [u8] {
-            let ptr = &self.data[self.offset..self.offset+len];
+            let ptr = &self.data[self.offset..self.offset + len];
             self.advance(len);
             ptr
         }
     }
 
     pub struct Writer {
-        data: Vec<u8>
+        data: Vec<u8>,
+    }
+
+    impl Default for Writer {
+        fn default() -> Self {
+            Self::new()
+        }
     }
 
     impl Writer {
@@ -116,51 +132,48 @@ pub mod serialize {
     }
 
     impl Datum {
-        pub fn deserialize(r: &mut Reader, nty: NType) -> Datum {
-            if nty.nullable {
+        pub fn deserialize(r: &mut Reader, n: Nullability, ty: Type) -> Datum {
+            if n == Nullable {
                 let is_null = r.read_u8() == 0;
                 if is_null {
                     return Datum::Null;
                 }
             }
-            match nty.ty {
+            match ty {
                 Type::String => {
                     let len = r.read_u32() as usize;
                     let bytes = r.read_bytes(len);
                     Datum::String(String::from_utf8_lossy(bytes).into_owned())
-                },
-                Type::Int8 => {
-                    Datum::Int8(r.read_i64())
-                },
-                Type::Bool => {
-                    Datum::Bool(r.read_u8() > 0)
                 }
+                Type::Int8 => Datum::Int8(r.read_i64()),
+                Type::Bool => Datum::Bool(r.read_u8() > 0),
             }
         }
 
-        pub fn serialize(&self, w: &mut Writer, nty: NType) {
+        pub fn serialize(&self, w: &mut Writer, n: Nullability) {
             const NOT_NULL: u8 = 1;
             match self {
                 Datum::String(s) => {
-                    if nty.nullable {
+                    if n == Nullable {
                         w.write_u8(NOT_NULL);
                     }
                     w.write_u32(s.len() as u32);
                     w.write_bytes(s.as_bytes());
-                },
+                }
                 Datum::Int8(v) => {
-                    if nty.nullable {
+                    if n == Nullable {
                         w.write_u8(NOT_NULL);
                     }
                     w.write_i64(*v);
                 }
                 Datum::Bool(v) => {
-                    if nty.nullable {
+                    if n == Nullable {
                         w.write_u8(NOT_NULL);
                     }
                     w.write_u8(*v as u8);
                 }
                 Datum::Null => {
+                    assert_eq!(n, Nullable);
                     w.write_u8(0);
                 }
             }
