@@ -1,7 +1,7 @@
 // Don't want to deal with adding `pub` everywhere for now
 #![allow(dead_code)]
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
@@ -92,7 +92,7 @@ struct Var<T> {
 #[derive(Debug, Clone)]
 struct VarInner<T> {
     initial_value: T,
-    versions: Vec<(Tx, T)>,
+    versions: HashMap<TxId, (Tx, T)>,
 }
 
 impl<T: Clone + std::fmt::Debug> Var<T> {
@@ -100,7 +100,7 @@ impl<T: Clone + std::fmt::Debug> Var<T> {
         Var {
             mu: Arc::new(Mutex::new(VarInner {
                 initial_value,
-                versions: vec![],
+                versions: HashMap::new(),
             })),
         }
     }
@@ -109,29 +109,59 @@ impl<T: Clone + std::fmt::Debug> Var<T> {
         let inner = self.mu.lock().unwrap().clone();
         let mut g = petgraph::graphmap::GraphMap::<TxId, (), petgraph::Directed>::new();
         let mut unvisited = HashSet::<Tx>::new();
-        for (tx, value) in &inner.versions {
+        let mut visited = HashMap::<TxId, TxState>::new();
+        for (_, (tx, value)) in &inner.versions {
             if tx == my_tx {
                 return value.clone();
             }
             unvisited.insert(tx.clone());
         }
         while let Some(tx) = take_any(&mut unvisited) {
-            // TODO: expand into seen, add to graph
+            g.add_node(tx.id());
+            let (state, seen) = tx.get_state();
+            for tx2 in &seen {
+                g.add_edge(tx.id(), tx2.id(), ());
+            }
+            unvisited.extend(
+                seen.iter()
+                    .filter(|x| !visited.contains_key(&x.id()))
+                    .cloned(),
+            );
+            visited.insert(tx.id(), state);
         }
-        let sccs = petgraph::algo::kosaraju_scc(&g);
-        if sccs.is_empty() {
-            return inner.initial_value;
-        }
-        println!("{:?}", sccs);
-        let last_scc = &sccs[sccs.len() - 1];
-        let winning_txid = last_scc.iter().max().unwrap();
-        inner.versions.into_iter().find_map(|(tx, value)| if tx.id() == *winning_txid { Some(value) } else { None }).unwrap()
+        let mut sccs = petgraph::algo::kosaraju_scc(&g);
+        println!(
+            "{:?}",
+            sccs.iter()
+                .map(|scc| scc
+                    .iter()
+                    .map(|txid| (txid, visited.get(txid).unwrap()))
+                    .collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+        );
+        sccs.iter_mut()
+            .rev()
+            .find_map(|scc| {
+                scc.sort();
+                scc.iter().rev().find_map(|txid| {
+                    if visited.get(txid) == Some(&Committed) {
+                        inner.versions.get(txid).map(|x| x.1.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or_else(|| inner.initial_value.clone())
     }
 
     fn write(&self, my_tx: &Tx, value: T) {
         let mut inner = self.mu.lock().unwrap();
-        let txs_seen = inner.versions.iter().map(|(tx, _)| tx.clone()).collect::<Vec<_>>();
-        inner.versions.push((my_tx.clone(), value));
+        let txs_seen = inner
+            .versions
+            .iter()
+            .map(|(_, (tx, _))| tx.clone())
+            .collect::<Vec<_>>();
+        inner.versions.insert(my_tx.id(), (my_tx.clone(), value));
         drop(inner);
 
         my_tx.mark_txs_as_seen(txs_seen);
@@ -141,9 +171,7 @@ impl<T: Clone + std::fmt::Debug> Var<T> {
 fn take_any<T: Eq + Hash + Clone>(s: &mut HashSet<T>) -> Option<T> {
     let item: Option<T> = s.iter().next().map(|x| x.clone());
     match item {
-        Some(item) => {
-            s.take(&item)
-        }
+        Some(item) => s.take(&item),
         None => None,
     }
 }
