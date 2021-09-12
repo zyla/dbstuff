@@ -47,10 +47,14 @@ impl<'b> TableHeap<'b> {
                         let new_page = self.buffer_pool.allocate_page().await?;
                         table_page.set_next_page_id(new_page.id());
                         page.dirty();
-                        drop(table_page);
-                        drop(page); // FIXME: this is wrong, we're publishing an uninitialized page!
+                        let new_page_data = new_page.data().write().await;
 
-                        let mut new_table_page = TablePage::new(new_page.data().write().await);
+                        // Note: we can only unlock the previous page after locking the next one -
+                        // otherwise we would be publishing a pointer to an uninitialized page.
+                        drop(table_page);
+                        drop(page);
+
+                        let mut new_table_page = TablePage::new(new_page_data);
                         let slot_index = new_table_page
                             .insert_tuple(tuple)
                             .expect("Tuple too big to fit on a new page");
