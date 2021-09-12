@@ -53,7 +53,7 @@ impl<'b> TableHeap<'b> {
                         let mut new_table_page = TablePage::new(new_page.data().write().await);
                         let slot_index = new_table_page
                             .insert_tuple(tuple)
-                            .expect("Freshly allocated table is full");
+                            .expect("Tuple too big to fit on a new page");
                         new_page.dirty();
                         return Ok((new_page.id(), slot_index));
                     }
