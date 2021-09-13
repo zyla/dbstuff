@@ -1,0 +1,26 @@
+Overall plan: implement a SQL database.
+
+Some assumptions:
+- I think I'll ditch the table heap, and instead use Btrees for primary row storage (by primary key, which will be required) and also for indexes.
+
+
+- Implement database
+  - Disk manager
+    - Current goal: make it concurrent (currently requires one giant mutex)
+      - Requires: support for `read_at` and `write_at` for `tokio::fs`
+  - Buffer pool
+    - Current goal: concurrent IO (currently holds buffer page lock on IO).
+      - First, do it with separate mutex for disk manager
+      - Once disk manager is actually concurrent, use it
+  - B+tree
+    - Current goal: write the operations as pseudocode, and see which operations will be needed on pages. Then implement them.
+    - Consider unifying storage for internal and leaf pages:
+      - The header format is a bit different, but the algorithms are essentially the same.
+      - Either extract header handling to some parameter, or possibly just have the same format and waste some space.
+        - the entry format would be then: | child pointer | entry offset (2) | 
+  - Catalog
+  - Query parser
+  - Query execution
+  - Query planner
+  - WAL
+  - Transactions

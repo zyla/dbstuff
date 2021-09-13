@@ -46,3 +46,32 @@ For each entry, the value is stored just after the key (and both key and value s
 -----------------------------------
 ^ free space pointer
 ```
+
+## Operations
+
+### Search
+
+Start from root node.
+
+On each internal node, binary-search in keys. Follow child pointer at the found index (which may be `num_keys` - that's ok because we have one more child pointer than keys).
+
+On leaf node, binary-search by keys. If found exact key, this is it. If not found, we have an insert location.
+
+### Insert
+
+Search for the key. We should find an appropriate leaf node and insert location.
+
+If there's space (before `free_space_ptr`) in the leaf node (for key an additional entry in header):
+- copy the key and value into free space
+- shift the header entries after the insert location by one
+- set the header entry appropriately
+
+Note that only header entries are sorted, not actual keys and values.
+
+If there's no space before `free_space_ptr`, check if the entry would fit after reorganizing - sum up all key and value sizes. If it is sufficient, reorganize the node:
+- copy the page into a temporary buffer
+- rewrite the page, copying each entry in order (including the new entry at insert location), starting at `PAGE_SIZE-total_entry_size`.
+
+Note: the reorganization means that we need API for writing entries at arbitrary offset.
+
+Third case: if there's no space even after compaction, split the page.
