@@ -24,3 +24,18 @@ Some assumptions:
   - Query planner
   - WAL
   - Transactions
+
+# Questions
+
+## Should we have different formats for Btree internal and leaf pages?
+
+Probably not. This would simplify things a lot.
+
+Postgres, for example, has a single generic page format (which just stores N "tuples" - byte sequences) which it uses for heap, btree and also other things. I think we should do the same.
+
+I wonder how Postgres stores child pointers, though.
+-> "pivot tuples" (tuples in internal pages) have a downlink pointer (in place of the target tuple id)
+
+Now I wonder how Postgres stores the last downlink pointer (after all pivot keys). Sentinel pivot?
+-> on non-leaf pages, the first pivot key is assumed to be "minus infinity"
+Interesting, I considered hacking on the last one. Maybe we should use the postgres convention though. So: downlink pointer is "after" the key in a pivot tuple.
