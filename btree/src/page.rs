@@ -45,6 +45,14 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 pub type SlotIndex = usize;
 
+impl<T, Meta> Deref for TupleBlockPage<T, Meta> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
 impl<T: Deref<Target = PageData>, Meta> TupleBlockPage<T, Meta> {
     pub fn from_existing(data: T) -> Self {
         let page = Self {
