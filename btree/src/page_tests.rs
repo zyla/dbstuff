@@ -10,7 +10,11 @@ struct Metadata {
     baz: u64,
 }
 
-const EXAMPLE_METADATA: Metadata = Metadata {foo: 0x0102030405060708, bar: 1, baz: 1 };
+const EXAMPLE_METADATA: Metadata = Metadata {
+    foo: 0x0102030405060708,
+    bar: 1,
+    baz: 1,
+};
 
 #[test]
 fn test_new_page() {

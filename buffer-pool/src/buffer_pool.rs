@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::io;
 use std::mem;
 use std::ops::{Deref, DerefMut};
-use tokio::sync::{RwLock, RwLockReadGuard};
+use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use bitvec::vec::BitVec;
 
@@ -105,6 +105,18 @@ impl<'a> PinnedPage<'a> {
         mem::forget(self);
         guard
     }
+
+    /// Lock the page data in write (exclusive) mode.
+    /// The returned guard will unpin the page when dropped.
+    pub async fn write(self) -> PinnedPageWriteGuard<'a> {
+        let guard = PinnedPageWriteGuard {
+            page: self.page,
+            guard: self.page.data.write().await,
+        };
+        // Avoid double-unpin
+        mem::forget(self);
+        guard
+    }
 }
 
 pub struct PinnedPageReadGuard<'a> {
@@ -132,6 +144,46 @@ impl<'a> Deref for PinnedPageReadGuard<'a> {
 }
 
 impl<'a> Drop for PinnedPageReadGuard<'a> {
+    fn drop(&mut self) {
+        // FIXME: We should make sure that we don't access the guard after we unpin the page -
+        // otherwise it can be concurrently reused!
+        // The following doesn't compile, figure out a way to do this.
+        // drop(self.guard);
+        self.page.pin_count.fetch_sub(1, SeqCst);
+    }
+}
+
+pub struct PinnedPageWriteGuard<'a> {
+    page: &'a Page,
+    guard: RwLockWriteGuard<'a, PageData>,
+}
+
+impl<'a> PinnedPageWriteGuard<'a> {
+    pub fn id(&self) -> PageId {
+        // SAFETY: The page is pinned, so the buffer pool is not switching it to a different one
+        unsafe { *self.page.id.get() }
+    }
+
+    pub fn dirty(&self) {
+        self.page.dirty()
+    }
+}
+
+impl<'a> Deref for PinnedPageWriteGuard<'a> {
+    type Target = PageData;
+
+    fn deref(&self) -> &Self::Target {
+        self.guard.deref()
+    }
+}
+
+impl<'a> DerefMut for PinnedPageWriteGuard<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.guard.deref_mut()
+    }
+}
+
+impl<'a> Drop for PinnedPageWriteGuard<'a> {
     fn drop(&mut self) {
         // FIXME: We should make sure that we don't access the guard after we unpin the page -
         // otherwise it can be concurrently reused!
