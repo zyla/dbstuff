@@ -3,7 +3,7 @@
 extern crate insta;
 
 pub mod btree;
-mod internal_page;
+mod page;
 
 #[cfg(test)]
 mod hexdump;

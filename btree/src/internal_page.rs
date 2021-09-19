@@ -1,4 +1,4 @@
-use buffer_pool::disk_manager::{PageData, PageId, INVALID_PAGE_ID, PAGE_SIZE};
+use buffer_pool::disk_manager::{PageData, PageId, PAGE_SIZE};
 use std::ops::{Deref, DerefMut};
 
 pub struct InternalPage<T> {
@@ -55,10 +55,9 @@ impl<T: Deref<Target = PageData>> InternalPage<T> {
     }
 
     pub fn get_child_pointer(&self, index: SlotIndex) -> PageId {
-        PageId(
-            self.read_u32(
-                OFFSET_ENTRY_DESCRIPTORS + SIZE_ENTRY_DESCRIPTOR * index + OFFSET_CHILD_POINTER,
-            ))
+        PageId(self.read_u32(
+            OFFSET_ENTRY_DESCRIPTORS + SIZE_ENTRY_DESCRIPTOR * index + OFFSET_CHILD_POINTER,
+        ))
     }
 
     fn get_key_descriptor(&self, index: usize) -> (usize, usize) {
