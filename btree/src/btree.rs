@@ -50,9 +50,9 @@ impl<'a> BTree<'a> {
                 unimplemented!("replacing existing key");
             }
             SearchResult::NotFound(insert_index) => {
-                // FIXME: allocate at insert_index
-                match page.alloc_tuple(LeafTupleHeader::SIZE + key.len() + value.len()) {
-                    Ok((index, tuple)) => {
+                let tuple_size = LeafTupleHeader::SIZE + key.len() + value.len();
+                match page.alloc_tuple_at(insert_index, tuple_size) {
+                    Ok(tuple) => {
                         *unsafe { slice_to_struct_mut(tuple) } = LeafTupleHeader {
                             key_size: key.len() as u8,
                         };

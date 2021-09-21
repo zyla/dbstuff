@@ -87,6 +87,22 @@ impl<T: Deref<Target = PageData>, Meta> TupleBlockPage<T, Meta> {
             - self.tuple_count() * mem::size_of::<TupleDescriptor>()
     }
 
+    pub fn free_space_after_compaction(&self) -> usize {
+        PAGE_SIZE
+            - mem::size_of::<PageHeader>()
+            - mem::size_of::<Meta>()
+            - self.tuple_count() * mem::size_of::<TupleDescriptor>()
+            - self.total_tuple_size()
+    }
+
+    pub fn total_tuple_size(&self) -> usize {
+        let mut tuple_total = 0;
+        for index in 0..self.tuple_count() {
+            tuple_total += self.get_tuple_descriptor(index).size as usize;
+        }
+        tuple_total
+    }
+
     pub fn get_tuple(&self, index: SlotIndex) -> Option<&[u8]> {
         let descriptor = self.get_tuple_descriptor(index);
         if descriptor.offset == 0 {
@@ -107,6 +123,13 @@ impl<T: Deref<Target = PageData>, Meta> TupleBlockPage<T, Meta> {
     #[cfg(test)]
     pub(crate) fn data(&self) -> &PageData {
         &self.data
+    }
+
+    #[cfg(test)]
+    pub(crate) fn dump_tuples(&self) -> Vec<Vec<u8>> {
+        (0..self.tuple_count())
+            .map(|index| self.get_tuple(index).unwrap().to_vec())
+            .collect()
     }
 }
 
@@ -133,22 +156,31 @@ impl<T: DerefMut<Target = PageData>, Meta: Copy> TupleBlockPage<T, Meta> {
     /// Unsafe because by messing with `tuple_count` or `free_space_pointer` one can cause accesses beyond the page
     /// boundary.
     pub unsafe fn header_mut(&mut self) -> &mut PageHeader {
-        unsafe { mem::transmute(self.data.as_ptr()) }
+        mem::transmute(self.data.as_ptr())
     }
 
     pub fn metadata_mut(&mut self) -> &mut Meta {
         unsafe { mem::transmute(self.data[PAGE_SIZE - mem::size_of::<Meta>()..].as_ptr()) }
     }
 
-    pub fn alloc_tuple(&mut self, size: usize) -> Result<(SlotIndex, &mut [u8])> {
+    pub fn alloc_tuple_at(&mut self, index: SlotIndex, size: usize) -> Result<&mut [u8]> {
         if self.free_space() < size + mem::size_of::<TupleDescriptor>() {
+            // TODO:compaction
             return Err(Error::PageFull);
         }
         let end = self.header().free_space_pointer;
         let start = end - (size as u16);
-        let index = self.header().tuple_count;
+        // move tuple descriptors after insertion point one index to the right
+        let tuple_count = self.tuple_count();
+        self.data.copy_within(
+            Self::tuple_descriptor_offset(index)..Self::tuple_descriptor_offset(tuple_count),
+            Self::tuple_descriptor_offset(index + 1),
+        );
+
         unsafe { self.header_mut() }.free_space_pointer = start;
-        unsafe { self.header_mut() }.tuple_count = index + 1;
+        unsafe { self.header_mut() }.tuple_count = self.header().tuple_count + 1;
+
+        // write the new tuple descriptor
         self.set_tuple_descriptor(
             index as usize,
             TupleDescriptor {
@@ -156,22 +188,29 @@ impl<T: DerefMut<Target = PageData>, Meta: Copy> TupleBlockPage<T, Meta> {
                 size: (end - start),
             },
         );
-        Ok((
-            index as SlotIndex,
-            &mut self.data[start as usize..end as usize],
-        ))
+        Ok(&mut self.data[start as usize..end as usize])
     }
 
     fn set_tuple_descriptor(&mut self, index: usize, descriptor: TupleDescriptor) {
         assert!(index < self.tuple_count());
-        let offset = mem::size_of::<PageHeader>() + index * mem::size_of::<TupleDescriptor>();
+        let offset = Self::tuple_descriptor_offset(index);
         unsafe { (self.data[offset..].as_mut_ptr() as *mut TupleDescriptor).write(descriptor) }
     }
 
+    fn tuple_descriptor_offset(index: usize) -> usize {
+        mem::size_of::<PageHeader>() + index * mem::size_of::<TupleDescriptor>()
+    }
+
     pub fn insert_tuple<'a>(&mut self, tuple: &'a [u8]) -> Result<SlotIndex> {
-        let (slot_index, new_tuple) = self.alloc_tuple(tuple.len())?;
+        let index = self.tuple_count();
+        self.insert_tuple_at(index, tuple)?;
+        Ok(index)
+    }
+
+    pub fn insert_tuple_at<'a>(&mut self, index: SlotIndex, tuple: &'a [u8]) -> Result<()> {
+        let new_tuple = self.alloc_tuple_at(index, tuple.len())?;
         new_tuple.copy_from_slice(tuple);
-        Ok(slot_index)
+        Ok(())
     }
 
     pub fn get_tuple_mut(&mut self, index: SlotIndex) -> Option<&mut [u8]> {

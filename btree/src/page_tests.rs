@@ -64,3 +64,33 @@ fn test_page_full() -> page::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_insert_tuple_at() -> page::Result<()> {
+    let mut page_data = [0u8; PAGE_SIZE];
+    let mut page = TupleBlockPage::new(&mut page_data, &EXAMPLE_METADATA);
+    page.insert_tuple_at(0, b"A")?;
+    page.insert_tuple_at(1, b"B")?;
+    page.insert_tuple_at(2, b"C")?;
+    page.insert_tuple_at(3, b"D")?;
+
+    assert_eq!(
+        page.dump_tuples(),
+        vec![b"A".to_vec(), b"B".to_vec(), b"C".to_vec(), b"D".to_vec(),]
+    );
+
+    page.insert_tuple_at(1, b"X")?;
+
+    assert_eq!(
+        page.dump_tuples(),
+        vec![
+            b"A".to_vec(),
+            b"X".to_vec(),
+            b"B".to_vec(),
+            b"C".to_vec(),
+            b"D".to_vec(),
+        ]
+    );
+
+    Ok(())
+}
