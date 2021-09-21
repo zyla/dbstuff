@@ -1,7 +1,7 @@
 use crate::page;
 use crate::page::TupleBlockPage;
 use buffer_pool::buffer_pool::{BufferPool, PinnedPageReadGuard, PinnedPageWriteGuard, Result};
-use buffer_pool::disk_manager::{PageData, PageId, PAGE_SIZE};
+use buffer_pool::disk_manager::{PageData, PageId};
 use std::cmp::Ordering;
 use std::mem;
 use std::ops::{Deref, DerefMut};
@@ -10,7 +10,7 @@ struct TreeMetadata {
     root_page_id: PageId,
 }
 
-struct BTree<'a> {
+pub struct BTree<'a> {
     buffer_pool: &'a BufferPool,
     meta_page_id: PageId,
 }
@@ -93,6 +93,38 @@ impl<'a> BTree<'a> {
             .await;
         Ok(NodePage::from_existing(root_page_data))
     }
+
+    #[cfg(test)]
+    pub async fn dump_tree(&self) -> Result<NodeDump> {
+        let page = self.get_root_page().await?;
+
+        if !page.metadata().is_leaf() {
+            unimplemented!("leaf only");
+        }
+
+        Ok(NodeDump::Leaf(
+            page.dump_tuples()
+                .iter()
+                .map(|tuple| {
+                    let header = unsafe { slice_to_struct::<LeafTupleHeader>(tuple) };
+                    (
+                        tuple[mem::size_of::<LeafTupleHeader>()
+                            ..mem::size_of::<LeafTupleHeader>() + (header.key_size as usize)]
+                            .to_vec(),
+                        tuple[mem::size_of::<LeafTupleHeader>() + (header.key_size as usize)..]
+                            .to_vec(),
+                    )
+                })
+                .collect(),
+        ))
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+pub enum NodeDump {
+    Internal(Vec<(NodeDump, Vec<u8>)>),
+    Leaf(Vec<(Vec<u8>, Vec<u8>)>),
 }
 
 struct NodePage<T> {
@@ -149,10 +181,10 @@ impl<T: DerefMut<Target = PageData>> NodePage<T> {
             let mid = (start + end) / 2;
             let tuple_key = self.get_tuple_key(mid);
             match tuple_key.cmp(key) {
-                Ordering::Less => {
+                Ordering::Greater => {
                     end = mid;
                 }
-                Ordering::Greater => {
+                Ordering::Less => {
                     start = mid + 1;
                 }
                 Ordering::Equal => {
