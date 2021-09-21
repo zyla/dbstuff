@@ -14,10 +14,8 @@ Some assumptions:
       - Once disk manager is actually concurrent, use it
   - B+tree
     - Current goal: write the operations as pseudocode, and see which operations will be needed on pages. Then implement them.
-    - Consider unifying storage for internal and leaf pages:
-      - The header format is a bit different, but the algorithms are essentially the same.
-      - Either extract header handling to some parameter, or possibly just have the same format and waste some space.
-        - the entry format would be then: | child pointer | entry offset (2) | 
+      - first without much regard for concurrency (recursively grab locks if needed), then rewrite to latch crabbing
+    - page format is now unified for leaf and internal pages - update the docs 
   - Catalog
   - Query parser
   - Query execution
