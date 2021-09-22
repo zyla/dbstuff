@@ -94,3 +94,69 @@ fn test_insert_tuple_at() -> page::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_delete_tuple_and_compact() -> page::Result<()> {
+    let mut page_data = [0u8; PAGE_SIZE];
+    let mut page = TupleBlockPage::new(&mut page_data, &EXAMPLE_METADATA);
+    page.insert_tuple(b"AAAAAAAAAAA")?;
+    page.insert_tuple(b"BBBBBBBBBBB")?;
+    page.insert_tuple(b"CCCCCCCCCCC")?;
+    page.delete_tuple(1);
+
+    assert_eq!(
+        page.dump_tuples(),
+        vec![b"AAAAAAAAAAA".to_vec(), b"CCCCCCCCCCC".to_vec(),]
+    );
+    assert_snapshot!(pretty_hex(&&page.data()[..]), @r###"
+    0000:   00 00 00 00  18 00 c7 0f  02 00 00 00  dd 0f 0b 00   ................
+    0010:   c7 0f 0b 00  c7 0f 0b 00  00 00 00 00  00 00 00 00   ................
+    0020:   00 00 00 00  00 00 00 00  00 00 00 00  00 00 00 00   ................
+    *
+    0fc0:   00 00 00 00  00 00 00 43  43 43 43 43  43 43 43 43   .......CCCCCCCCC
+    0fd0:   43 43 42 42  42 42 42 42  42 42 42 42  42 41 41 41   CCBBBBBBBBBBBAAA
+    0fe0:   41 41 41 41  41 41 41 41  08 07 06 05  04 03 02 01   AAAAAAAA........
+    0ff0:   01 00 00 00  00 00 00 00  01 00 00 00  00 00 00 00   ................
+    "###);
+
+    assert_eq!(page.free_space(), 4019);
+    assert_eq!(page.free_space_after_compaction(), 4030);
+    page.compact();
+    assert_eq!(
+        page.dump_tuples(),
+        vec![b"AAAAAAAAAAA".to_vec(), b"CCCCCCCCCCC".to_vec(),]
+    );
+    assert_eq!(page.free_space(), 4030);
+    assert_snapshot!(pretty_hex(&&page.data()[..]), @r###"
+    0000:   00 00 00 00  18 00 d2 0f  02 00 00 00  dd 0f 0b 00   ................
+    0010:   d2 0f 0b 00  c7 0f 0b 00  00 00 00 00  00 00 00 00   ................
+    0020:   00 00 00 00  00 00 00 00  00 00 00 00  00 00 00 00   ................
+    *
+    0fc0:   00 00 00 00  00 00 00 43  43 43 43 43  43 43 43 43   .......CCCCCCCCC
+    0fd0:   43 43 43 43  43 43 43 43  43 43 43 43  43 41 41 41   CCCCCCCCCCCCCAAA
+    0fe0:   41 41 41 41  41 41 41 41  08 07 06 05  04 03 02 01   AAAAAAAA........
+    0ff0:   01 00 00 00  00 00 00 00  01 00 00 00  00 00 00 00   ................
+    "###);
+
+    page.insert_tuple(b"DDDDDDDDDDD")?;
+    assert_eq!(
+        page.dump_tuples(),
+        vec![
+            b"AAAAAAAAAAA".to_vec(),
+            b"CCCCCCCCCCC".to_vec(),
+            b"DDDDDDDDDDD".to_vec(),
+        ]
+    );
+    assert_snapshot!(pretty_hex(&&page.data()[..]), @r###"
+    0000:   00 00 00 00  18 00 c7 0f  03 00 00 00  dd 0f 0b 00   ................
+    0010:   d2 0f 0b 00  c7 0f 0b 00  00 00 00 00  00 00 00 00   ................
+    0020:   00 00 00 00  00 00 00 00  00 00 00 00  00 00 00 00   ................
+    *
+    0fc0:   00 00 00 00  00 00 00 44  44 44 44 44  44 44 44 44   .......DDDDDDDDD
+    0fd0:   44 44 43 43  43 43 43 43  43 43 43 43  43 41 41 41   DDCCCCCCCCCCCAAA
+    0fe0:   41 41 41 41  41 41 41 41  08 07 06 05  04 03 02 01   AAAAAAAA........
+    0ff0:   01 00 00 00  00 00 00 00  01 00 00 00  00 00 00 00   ................
+    "###);
+
+    Ok(())
+}

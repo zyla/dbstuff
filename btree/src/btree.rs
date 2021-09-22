@@ -54,7 +54,7 @@ impl<'a> BTree<'a> {
                 match page.alloc_tuple_at(insert_index, tuple_size) {
                     Ok(tuple) => {
                         *unsafe { slice_to_struct_mut(tuple) } = LeafTupleHeader {
-                            key_size: key.len() as u8,
+                            key_size: key.len() as u16,
                         };
                         tuple[LeafTupleHeader::SIZE..LeafTupleHeader::SIZE + key.len()]
                             .copy_from_slice(key);
@@ -222,7 +222,7 @@ unsafe fn slice_to_struct_mut<T>(buffer: &mut [u8]) -> &mut T {
 
 #[derive(Debug, Clone, Copy)]
 struct LeafTupleHeader {
-    key_size: u8,
+    key_size: u16,
 }
 
 impl LeafTupleHeader {

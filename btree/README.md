@@ -75,3 +75,7 @@ If there's no space before `free_space_ptr`, check if the entry would fit after 
 Note: the reorganization means that we need API for writing entries at arbitrary offset.
 
 Third case: if there's no space even after compaction, split the page.
+
+## Questions
+
+Do we want dead tuple slots? Or do we just always shift the header when deleting?

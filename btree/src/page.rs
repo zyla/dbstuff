@@ -29,6 +29,7 @@ pub struct PageHeader {
     // next: a sequence of TupleDescriptor structs
 }
 
+#[derive(Debug)]
 struct TupleDescriptor {
     offset: u16,
     size: u16,
@@ -163,9 +164,40 @@ impl<T: DerefMut<Target = PageData>, Meta: Copy> TupleBlockPage<T, Meta> {
         unsafe { mem::transmute(self.data[PAGE_SIZE - mem::size_of::<Meta>()..].as_ptr()) }
     }
 
+    pub fn compact(&mut self) {
+        let mut data_copy = Box::new(*self.data);
+        let copy = TupleBlockPage::<&mut PageData, Meta>::from_existing(&mut data_copy);
+        unsafe { self.header_mut() }.tuple_count = 0;
+        unsafe { self.header_mut() }.free_space_pointer =
+            (PAGE_SIZE as u16) - self.header().metadata_size;
+        for index in 0..copy.tuple_count() {
+            println!("free space; {:?}", self.free_space());
+            println!(
+                "compact:inserting tuple {:?}",
+                copy.get_tuple_descriptor(index)
+            );
+            self.insert_tuple_at(index, copy.get_tuple(index).expect("dead tuple unhandled"))
+                .expect("page should not be full during compaction");
+        }
+    }
+
+    /// Delete a tuple, shifting the tuples after it one slot left.
+    pub fn delete_tuple(&mut self, index: SlotIndex) {
+        let tuple_count = self.tuple_count();
+        assert!(index < tuple_count);
+        self.data.copy_within(
+            Self::tuple_descriptor_offset(index + 1)..Self::tuple_descriptor_offset(tuple_count),
+            Self::tuple_descriptor_offset(index),
+        );
+        unsafe { self.header_mut() }.tuple_count = (tuple_count - 1) as u16;
+    }
+
     pub fn alloc_tuple_at(&mut self, index: SlotIndex, size: usize) -> Result<&mut [u8]> {
-        if self.free_space() < size + mem::size_of::<TupleDescriptor>() {
-            // TODO:compaction
+        let space_needed = size + mem::size_of::<TupleDescriptor>();
+        if self.free_space() < space_needed && self.free_space_after_compaction() >= space_needed {
+            self.compact();
+        }
+        if self.free_space() < space_needed {
             return Err(Error::PageFull);
         }
         let end = self.header().free_space_pointer;
