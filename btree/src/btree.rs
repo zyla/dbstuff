@@ -121,9 +121,9 @@ impl<'a> BTree<'a> {
 }
 
 #[cfg(test)]
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum NodeDump {
-    Internal(Vec<(NodeDump, Vec<u8>)>),
+    Internal(Vec<(Vec<u8>, NodeDump)>),
     Leaf(Vec<(Vec<u8>, Vec<u8>)>),
 }
 

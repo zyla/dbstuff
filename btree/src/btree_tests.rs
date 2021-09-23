@@ -1,7 +1,8 @@
-use crate::btree::BTree;
+use crate::btree::{BTree, NodeDump};
 use crate::page;
 use crate::page::{PageFull, TupleBlockPage};
 use buffer_pool::buffer_pool::{BufferPool, Result};
+use buffer_pool::disk_manager::PAGE_SIZE;
 use buffer_pool::disk_manager_mem::DiskManagerMem;
 
 #[tokio::test]
@@ -84,5 +85,28 @@ async fn test_insert_many_should_sort() -> Result<()> {
         ],
     )
     "###);
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "unimplemented"]
+async fn test_page_split() -> Result<()> {
+    let buffer_pool = BufferPool::new(Box::new(DiskManagerMem::new()), 20);
+    let btree = BTree::new(&buffer_pool).await?;
+    btree.insert(&[1; PAGE_SIZE / 2], &[101]).await?;
+    btree.insert(&[2; PAGE_SIZE / 2], &[102]).await?;
+    assert_eq!(
+        btree.dump_tree().await?,
+        NodeDump::Internal(vec![
+            (
+                vec![],
+                NodeDump::Leaf(vec![(vec![1; PAGE_SIZE / 2], vec![101])])
+            ),
+            (
+                vec![1; PAGE_SIZE / 2],
+                NodeDump::Leaf(vec![(vec![2; PAGE_SIZE / 2], vec![102])])
+            )
+        ])
+    );
     Ok(())
 }

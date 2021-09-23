@@ -22,6 +22,7 @@ pub struct TupleBlockPage<T, Meta = ()> {
 //
 
 pub struct PageHeader {
+    #[allow(dead_code)]
     lsn: u32,
     metadata_size: u16,
     free_space_pointer: u16,
