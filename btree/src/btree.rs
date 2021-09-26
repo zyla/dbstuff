@@ -50,15 +50,10 @@ impl<'a> BTree<'a> {
                 unimplemented!("replacing existing key");
             }
             SearchResult::NotFound(insert_index) => {
-                let tuple_size = LeafTupleHeader::SIZE + key.len() + value.len();
+                let tuple_size = leaf_tuple::size(key, value);
                 match page.alloc_tuple_at(insert_index, tuple_size) {
                     Ok(tuple) => {
-                        *unsafe { slice_to_struct_mut(tuple) } = LeafTupleHeader {
-                            key_size: key.len() as u16,
-                        };
-                        tuple[LeafTupleHeader::SIZE..LeafTupleHeader::SIZE + key.len()]
-                            .copy_from_slice(key);
-                        tuple[LeafTupleHeader::SIZE + key.len()..].copy_from_slice(value);
+                        leaf_tuple::write(tuple, key, value);
                         page.dirty();
                         Ok(())
                     }
@@ -106,13 +101,9 @@ impl<'a> BTree<'a> {
             page.dump_tuples()
                 .iter()
                 .map(|tuple| {
-                    let header = unsafe { slice_to_struct::<LeafTupleHeader>(tuple) };
                     (
-                        tuple[mem::size_of::<LeafTupleHeader>()
-                            ..mem::size_of::<LeafTupleHeader>() + (header.key_size as usize)]
-                            .to_vec(),
-                        tuple[mem::size_of::<LeafTupleHeader>() + (header.key_size as usize)..]
-                            .to_vec(),
+                        leaf_tuple::get_key(tuple).to_vec(),
+                        leaf_tuple::get_value(tuple).to_vec(),
                     )
                 })
                 .collect(),
@@ -199,9 +190,7 @@ impl<T: DerefMut<Target = PageData>> NodePage<T> {
     fn get_tuple_key(&self, index: usize) -> &[u8] {
         let tuple = self.page.get_tuple(index).expect("found null tuple");
         if self.metadata().is_leaf() {
-            let header = unsafe { slice_to_struct::<LeafTupleHeader>(tuple) };
-            &tuple[mem::size_of::<LeafTupleHeader>()
-                ..mem::size_of::<LeafTupleHeader>() + (header.key_size as usize)]
+            leaf_tuple::get_key(tuple)
         } else {
             unimplemented!("only leaf tuples implemented");
         }
@@ -220,13 +209,45 @@ unsafe fn slice_to_struct_mut<T>(buffer: &mut [u8]) -> &mut T {
     mem::transmute(buffer.as_ptr())
 }
 
-#[derive(Debug, Clone, Copy)]
-struct LeafTupleHeader {
-    key_size: u16,
-}
+mod leaf_tuple {
+    use super::*;
 
-impl LeafTupleHeader {
-    const SIZE: usize = mem::size_of::<LeafTupleHeader>();
+    #[derive(Debug, Clone, Copy)]
+    pub struct Header {
+        pub key_size: u16,
+    }
+
+    impl Header {
+        pub const SIZE: usize = mem::size_of::<Header>();
+    }
+
+    pub fn size(key: &[u8], value: &[u8]) -> usize {
+        Header::SIZE + key.len() + value.len()
+    }
+
+    /// Write a leaf tuple into the provided slice.
+    /// The slice must have size at least that returned by `size()`.
+    pub fn write(tuple: &mut [u8], key: &[u8], value: &[u8]) {
+        *unsafe { slice_to_struct_mut(tuple) } = Header {
+            key_size: key.len() as u16,
+        };
+        tuple[Header::SIZE..Header::SIZE + key.len()].copy_from_slice(key);
+        tuple[Header::SIZE + key.len()..].copy_from_slice(value);
+    }
+
+    pub fn get_header(tuple: &[u8]) -> &Header {
+        unsafe { slice_to_struct(tuple) }
+    }
+
+    pub fn get_key(tuple: &[u8]) -> &[u8] {
+        let key_len = get_header(tuple).key_size as usize;
+        &tuple[Header::SIZE..Header::SIZE + key_len]
+    }
+
+    pub fn get_value(tuple: &[u8]) -> &[u8] {
+        let key_len = get_header(tuple).key_size as usize;
+        &tuple[Header::SIZE + key_len..]
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
