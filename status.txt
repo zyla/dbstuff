@@ -37,3 +37,24 @@ I wonder how Postgres stores child pointers, though.
 Now I wonder how Postgres stores the last downlink pointer (after all pivot keys). Sentinel pivot?
 -> on non-leaf pages, the first pivot key is assumed to be "minus infinity"
 Interesting, I considered hacking on the last one. Maybe we should use the postgres convention though. So: downlink pointer is "after" the key in a pivot tuple.
+
+## How should we test non-trivial btrees?
+
+Our page size is fixed. So to trigger a split, we have to insert about 4KB of data into the tree. To have more than one level, we'd have to have a lot of stuff there. When test data is this big, it's much harder to diagnoze failures.
+
+There are several options:
+- just add a lot of data. (possibly large tuples?)
+- make the page size configurable
+  - possibly only in the btree, and only at runtime (PAGE_SIZE would stay constant)
+  - will have to propagata to TupleBlockPage
+- make the maximum number of tuples configurable
+  - Bad idea. Currently there's only a space limit. This would introduce another mode of operation just for tests.
+
+# Log
+
+## 2021-09-26
+
+The plan today is to implement internal pages and pivot tuples.
+The simplest test would be to start with page split (without implementing recursive search) - so that we can test insert with page split, only dumping the resulting tree structure.
+
+Observation: it's harder than usual to test individual functions, because they operate on the on-disk format, and it's harder to prepare test data.

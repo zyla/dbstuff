@@ -89,7 +89,6 @@ async fn test_insert_many_should_sort() -> Result<()> {
 }
 
 #[tokio::test]
-#[ignore = "unimplemented"]
 async fn test_page_split() -> Result<()> {
     let buffer_pool = BufferPool::new(Box::new(DiskManagerMem::new()), 20);
     let btree = BTree::new(&buffer_pool).await?;

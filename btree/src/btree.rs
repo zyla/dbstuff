@@ -57,7 +57,16 @@ impl<'a> BTree<'a> {
                         page.dirty();
                         Ok(())
                     }
-                    Err(page::Error::PageFull) => unimplemented!("page split"),
+                    Err(page::Error::PageFull) => {
+                        // FIXME: crash in case the tuple is too big to fit in any page - we don't
+                        // support overflow
+                        let new_sibling_page =
+                            self.buffer_pool.allocate_page().await?.write().await;
+                        let new_sibling = NodePage::new_leaf(new_sibling_page);
+                        let split_index = page.get_split_index(insert_index, tuple_size);
+                        new_sibling.page.dirty();
+                        unimplemented!("page split");
+                    }
                 }
             }
         }
@@ -146,25 +155,8 @@ impl<T: Deref<Target = PageData>> NodePage<T> {
     fn metadata(&self) -> &NodeMetadata {
         self.page.metadata()
     }
-}
-
-enum SearchResult {
-    Found(usize),
-    NotFound(usize),
-}
-
-impl<T: DerefMut<Target = PageData>> NodePage<T> {
-    fn new_leaf(data: T) -> Self {
-        Self {
-            page: TupleBlockPage::new(data, &NodeMetadata { level: 0 }),
-        }
-    }
 
     fn binary_search(&self, key: &[u8]) -> SearchResult {
-        if !self.metadata().is_leaf() {
-            unimplemented!("Only leaf search implemented for now");
-        }
-
         let mut start = 0;
         let mut end = self.page.tuple_count();
 
@@ -192,7 +184,75 @@ impl<T: DerefMut<Target = PageData>> NodePage<T> {
         if self.metadata().is_leaf() {
             leaf_tuple::get_key(tuple)
         } else {
-            unimplemented!("only leaf tuples implemented");
+            pivot_tuple::get_key(tuple)
+        }
+    }
+
+    /// Compute tuple index at which to split the page. Tuples >= this index will go to the new
+    /// page. The tuple bytes will be divided evenly (as much as possible) between the pages.
+    ///
+    /// During calculation a new tuple to be inserted at `insert_index` is taken into account.
+    /// The returned index is shifted after `insert_index`.
+    ///
+    /// TODO: in some cases this will result in the new tuple not fitting on the page. Handle these
+    /// cases.
+    pub fn get_split_index(&self, insert_index: usize, tuple_size: usize) -> usize {
+        let total_size = self.page.total_tuple_size() + tuple_size;
+        let split_at_byte = total_size / 2;
+        let mut bytes_so_far = 0;
+        // After insert there will be one more tuple
+        let num_tuples = self.page.tuple_count() + 1;
+        for target_index in 0..num_tuples {
+            if target_index == insert_index {
+                // this is the new tuple
+                bytes_so_far += tuple_size;
+            } else {
+                // If we're after the inserted tuple, be sure to read tuple size from the original
+                // offset, not the one after insert
+                let source_index = if target_index > insert_index {
+                    target_index - 1
+                } else {
+                    target_index
+                };
+                bytes_so_far += self.page.get_tuple_descriptor(source_index).size as usize;
+            }
+            if bytes_so_far > split_at_byte {
+                return target_index;
+            }
+        }
+        panic!("get_split_index didn't reach split_at_byte");
+    }
+}
+
+//#[cfg(test)]
+mod get_split_index_tests {
+    use super::*;
+    use buffer_pool::disk_manager::PAGE_SIZE;
+
+    fn make_page(tuples: &[usize]) -> NodePage<Box<PageData>> {
+        let data = Box::new([0; PAGE_SIZE]);
+        let page = NodePage::new_leaf(data);
+        for tuple_size in tuples {
+            page.insert_tuple(&[0; tuple_size]);
+        }
+        page
+    }
+
+    #[test]
+    fn split_before_insert() {
+        assert_eq!(make_page(&[1]).get_split_index(1, 1), 1);
+    }
+}
+
+enum SearchResult {
+    Found(usize),
+    NotFound(usize),
+}
+
+impl<T: DerefMut<Target = PageData>> NodePage<T> {
+    fn new_leaf(data: T) -> Self {
+        Self {
+            page: TupleBlockPage::new(data, &NodeMetadata { level: 0 }),
         }
     }
 }
@@ -247,6 +307,38 @@ mod leaf_tuple {
     pub fn get_value(tuple: &[u8]) -> &[u8] {
         let key_len = get_header(tuple).key_size as usize;
         &tuple[Header::SIZE + key_len..]
+    }
+}
+
+mod pivot_tuple {
+    use super::*;
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct Header {
+        pub downlink_pointer: PageId,
+    }
+
+    impl Header {
+        pub const SIZE: usize = mem::size_of::<Header>();
+    }
+
+    pub fn size(key: &[u8]) -> usize {
+        Header::SIZE + key.len()
+    }
+
+    /// Write a leaf tuple into the provided slice.
+    /// The slice must have size at least that returned by `size()`.
+    pub fn write(tuple: &mut [u8], downlink_pointer: PageId, key: &[u8]) {
+        *unsafe { slice_to_struct_mut(tuple) } = Header { downlink_pointer };
+        tuple[Header::SIZE..].copy_from_slice(key);
+    }
+
+    pub fn get_header(tuple: &[u8]) -> &Header {
+        unsafe { slice_to_struct(tuple) }
+    }
+
+    pub fn get_key(tuple: &[u8]) -> &[u8] {
+        &tuple[Header::SIZE..]
     }
 }
 
