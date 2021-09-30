@@ -58,3 +58,7 @@ The plan today is to implement internal pages and pivot tuples.
 The simplest test would be to start with page split (without implementing recursive search) - so that we can test insert with page split, only dumping the resulting tree structure.
 
 Observation: it's harder than usual to test individual functions, because they operate on the on-disk format, and it's harder to prepare test data.
+
+## 2021-09-30
+
+Plan for today: finish implementing internal pages, pivot tuples and page split.

@@ -214,7 +214,11 @@ impl<T: Deref<Target = PageData>> NodePage<T> {
                 } else {
                     target_index
                 };
-                bytes_so_far += self.page.get_tuple_descriptor(source_index).size as usize;
+                bytes_so_far += self
+                    .page
+                    .get_tuple(source_index)
+                    .expect("expected no dead tuples")
+                    .len();
             }
             if bytes_so_far > split_at_byte {
                 return target_index;
@@ -224,16 +228,16 @@ impl<T: Deref<Target = PageData>> NodePage<T> {
     }
 }
 
-//#[cfg(test)]
+#[cfg(test)]
 mod get_split_index_tests {
     use super::*;
     use buffer_pool::disk_manager::PAGE_SIZE;
 
     fn make_page(tuples: &[usize]) -> NodePage<Box<PageData>> {
         let data = Box::new([0; PAGE_SIZE]);
-        let page = NodePage::new_leaf(data);
-        for tuple_size in tuples {
-            page.insert_tuple(&[0; tuple_size]);
+        let mut page = NodePage::new_leaf(data);
+        for (index, tuple_size) in tuples.iter().enumerate() {
+            page.alloc_tuple_at(index, *tuple_size).unwrap();
         }
         page
     }
@@ -241,6 +245,27 @@ mod get_split_index_tests {
     #[test]
     fn split_before_insert() {
         assert_eq!(make_page(&[1]).get_split_index(1, 1), 1);
+    }
+    #[test]
+    fn split_after_insert() {
+        assert_eq!(make_page(&[1]).get_split_index(0, 1), 1);
+    }
+
+    // In both cases below we can't fit both tuples on a single page.
+    #[test]
+    fn split_large_tuple_1() {
+        assert_eq!(
+            make_page(&[PAGE_SIZE / 2]).get_split_index(0, PAGE_SIZE / 2 - 100),
+            1
+        );
+    }
+    #[test]
+    #[ignore = "case not handled yet"]
+    fn split_large_tuple_2() {
+        assert_eq!(
+            make_page(&[PAGE_SIZE / 2 - 100]).get_split_index(0, PAGE_SIZE / 2),
+            1
+        );
     }
 }
 
