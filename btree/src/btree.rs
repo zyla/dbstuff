@@ -62,10 +62,46 @@ impl<'a> BTree<'a> {
                         // support overflow
                         let new_sibling_page =
                             self.buffer_pool.allocate_page().await?.write().await;
-                        let new_sibling = NodePage::new_leaf(new_sibling_page);
+                        let mut new_sibling = NodePage::new_leaf(new_sibling_page);
                         let split_index = page.get_split_index(insert_index, tuple_size);
+                        let num_tuples = page.tuple_count() + 1;
+
+                        for target_index in split_index..num_tuples {
+                            if target_index == insert_index {
+                                // this is the new tuple
+                                match new_sibling.alloc_tuple_at(insert_index - split_index, tuple_size) {
+                                    Ok(tuple) => {
+                                        leaf_tuple::write(tuple, key, value);
+                                    }
+                                    Err(page::Error::PageFull) => {
+                                        panic!("new tuple does not fit after split")
+                                    }
+                                }
+                            } else {
+                                let source_index = if target_index > insert_index {
+                                    target_index - 1
+                                } else {
+                                    target_index
+                                };
+                                new_sibling
+                                    .insert_tuple(page.get_tuple(source_index).expect("dead tuple"))
+                                    .expect("old tuple does not fit after split");
+                            }
+                        }
+
+                        if insert_index < split_index {
+                            // Inserted tuple lands on the old page.
+                            unsafe { page.header_mut() }.tuple_count = (split_index - 1) as u16;
+                            let tuple = page
+                                .alloc_tuple_at(insert_index, tuple_size)
+                                .expect("new tuple does not fit after page split");
+                            leaf_tuple::write(tuple, key, value);
+                        } else {
+                            unsafe { page.header_mut() }.tuple_count = split_index as u16;
+                        }
+
                         new_sibling.page.dirty();
-                        unimplemented!("page split");
+                        Ok(())
                     }
                 }
             }

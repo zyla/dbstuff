@@ -26,7 +26,8 @@ pub struct PageHeader {
     lsn: u32,
     metadata_size: u16,
     free_space_pointer: u16,
-    tuple_count: u16,
+    // TODO: instead of pub(crate), expose a function to truncate the tuple vector
+    pub(crate) tuple_count: u16,
     // next: a sequence of TupleDescriptor structs
 }
 
