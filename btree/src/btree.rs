@@ -39,7 +39,8 @@ impl<'a> BTree<'a> {
     /// Inserts the given key into the tree.
     /// When already there, overwrites the value.
     pub async fn insert(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        let mut page = self.get_root_page_write().await?;
+        let (meta, mut page) = self.get_root_page_write().await?;
+        let mut parent = Parent::MetaPage(meta);
 
         if !page.metadata().is_leaf() {
             unimplemented!("Only leaf search implemented for now");
@@ -69,7 +70,9 @@ impl<'a> BTree<'a> {
                         for target_index in split_index..num_tuples {
                             if target_index == insert_index {
                                 // this is the new tuple
-                                match new_sibling.alloc_tuple_at(insert_index - split_index, tuple_size) {
+                                match new_sibling
+                                    .alloc_tuple_at(insert_index - split_index, tuple_size)
+                                {
                                     Ok(tuple) => {
                                         leaf_tuple::write(tuple, key, value);
                                     }
@@ -101,6 +104,38 @@ impl<'a> BTree<'a> {
                         }
 
                         new_sibling.page.dirty();
+
+                        match parent {
+                            Parent::InternalPage => {
+                                // TODO: insert into the parent
+                                unimplemented!("splitting non-root page")
+                            }
+                            Parent::MetaPage(mut meta_page) => {
+                                // We are splitting the root page. Create a new internal page to
+                                // replace the root.
+                                let new_root_page =
+                                    self.buffer_pool.allocate_page().await?.write().await;
+                                let mut new_root = NodePage::new_internal(
+                                    new_root_page,
+                                    page.metadata().level + 1,
+                                    page.id(),
+                                );
+                                let split_key = new_sibling.get_tuple_key(0);
+                                let sibling_pointer_tuple = new_root
+                                    .alloc_tuple_at(1, pivot_tuple::size(split_key))
+                                    .expect("no space for key in new root");
+                                pivot_tuple::write(
+                                    sibling_pointer_tuple,
+                                    new_sibling.id(),
+                                    split_key,
+                                );
+                                new_root.page.dirty();
+
+                                meta_page.metadata_mut().root_page_id = new_root.id();
+                                meta_page.data.dirty();
+                            }
+                        }
+
                         Ok(())
                     }
                 }
@@ -112,48 +147,70 @@ impl<'a> BTree<'a> {
         let meta_page = self.buffer_pool.get_page(self.meta_page_id).await?;
         let meta_page_data = meta_page.data().read().await;
         let meta: &TreeMetadata = unsafe { slice_to_struct(&meta_page_data[0..]) };
-        let root_page_data = self
-            .buffer_pool
-            .get_page(meta.root_page_id)
-            .await?
-            .read()
-            .await;
-        Ok(NodePage::from_existing(root_page_data))
+        Ok(self.get_node_page(meta.root_page_id).await?)
     }
 
-    async fn get_root_page_write(&self) -> Result<NodePage<PinnedPageWriteGuard<'a>>> {
-        let meta_page = self.buffer_pool.get_page(self.meta_page_id).await?;
-        let meta_page_data = meta_page.data().read().await;
-        let meta: &TreeMetadata = unsafe { slice_to_struct(&meta_page_data[0..]) };
+    async fn get_node_page(&self, page_id: PageId) -> Result<NodePage<PinnedPageReadGuard<'a>>> {
+        Ok(NodePage::from_existing(
+            self.buffer_pool.get_page(page_id).await?.read().await,
+        ))
+    }
+
+    async fn get_root_page_write(
+        &self,
+    ) -> Result<(
+        MetaPage<PinnedPageWriteGuard<'a>>,
+        NodePage<PinnedPageWriteGuard<'a>>,
+    )> {
+        let meta_page_ = self.buffer_pool.get_page(self.meta_page_id).await?;
+        let meta_page = MetaPage::from_existing(meta_page_.write().await);
         let root_page_data = self
             .buffer_pool
-            .get_page(meta.root_page_id)
+            .get_page(meta_page.metadata().root_page_id)
             .await?
             .write()
             .await;
-        Ok(NodePage::from_existing(root_page_data))
+        Ok((meta_page, NodePage::from_existing(root_page_data)))
     }
 
     #[cfg(test)]
     pub async fn dump_tree(&self) -> Result<NodeDump> {
-        let page = self.get_root_page().await?;
-
-        if !page.metadata().is_leaf() {
-            unimplemented!("leaf only");
-        }
-
-        Ok(NodeDump::Leaf(
-            page.dump_tuples()
-                .iter()
-                .map(|tuple| {
-                    (
-                        leaf_tuple::get_key(tuple).to_vec(),
-                        leaf_tuple::get_value(tuple).to_vec(),
-                    )
-                })
-                .collect(),
-        ))
+        self.dump_node(self.get_root_page().await?).await
     }
+
+    #[cfg(test)]
+    pub async fn dump_node(&self, page: NodePage<PinnedPageReadGuard<'a>>) -> Result<NodeDump> {
+        if page.metadata().is_leaf() {
+            Ok(NodeDump::Leaf(
+                page.dump_tuples()
+                    .iter()
+                    .map(|tuple| {
+                        (
+                            leaf_tuple::get_key(tuple).to_vec(),
+                            leaf_tuple::get_value(tuple).to_vec(),
+                        )
+                    })
+                    .collect(),
+            ))
+        } else {
+            let mut result = vec![];
+            for tuple in page.dump_tuples() {
+                let child = self
+                    .get_node_page(pivot_tuple::get_header(&tuple).downlink_pointer)
+                    .await?;
+                result.push((
+                    pivot_tuple::get_key(&tuple).to_vec(),
+                    self.dump_node(child).await?,
+                ));
+            }
+            Ok(NodeDump::Internal(result))
+        }
+    }
+}
+
+enum Parent<T> {
+    MetaPage(MetaPage<T>),
+    InternalPage, // TODO
 }
 
 #[cfg(test)]
@@ -161,6 +218,26 @@ impl<'a> BTree<'a> {
 pub enum NodeDump {
     Internal(Vec<(Vec<u8>, NodeDump)>),
     Leaf(Vec<(Vec<u8>, Vec<u8>)>),
+}
+
+struct MetaPage<T> {
+    data: T,
+}
+
+impl<T: Deref<Target = PageData>> MetaPage<T> {
+    pub fn from_existing(data: T) -> Self {
+        Self { data }
+    }
+
+    pub fn metadata(&self) -> &TreeMetadata {
+        unsafe { slice_to_struct(&self.data[0..]) }
+    }
+}
+
+impl<T: DerefMut<Target = PageData>> MetaPage<T> {
+    pub fn metadata_mut(&mut self) -> &mut TreeMetadata {
+        unsafe { slice_to_struct_mut(&mut self.data[0..]) }
+    }
 }
 
 struct NodePage<T> {
@@ -315,6 +392,15 @@ impl<T: DerefMut<Target = PageData>> NodePage<T> {
         Self {
             page: TupleBlockPage::new(data, &NodeMetadata { level: 0 }),
         }
+    }
+
+    fn new_internal(data: T, level: u8, first_child: PageId) -> Self {
+        let mut page = TupleBlockPage::new(data, &NodeMetadata { level });
+        let tuple = page
+            .alloc_tuple_at(0, pivot_tuple::size(&[]))
+            .expect("no space for -inf tuple");
+        pivot_tuple::write(tuple, first_child, &[]);
+        Self { page }
     }
 }
 
