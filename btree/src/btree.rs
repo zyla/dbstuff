@@ -2,7 +2,6 @@
 
 use crate::page;
 use crate::page::TupleBlockPage;
-#[cfg(test)]
 use async_recursion::async_recursion;
 use buffer_pool::buffer_pool::{BufferPool, PinnedPageReadGuard, PinnedPageWriteGuard, Result};
 use buffer_pool::disk_manager::{PageData, PageId};
@@ -177,12 +176,10 @@ impl<'a> BTree<'a> {
         Ok((meta_page, NodePage::from_existing(root_page_data)))
     }
 
-    #[cfg(test)]
     pub async fn dump_tree(&self) -> Result<NodeDump> {
         self.dump_node(self.get_root_page().await?).await
     }
 
-    #[cfg(test)]
     #[async_recursion]
     async fn dump_node(&self, page: NodePage<PinnedPageReadGuard<'a>>) -> Result<NodeDump> {
         if page.metadata().is_leaf() {
@@ -218,7 +215,6 @@ enum Parent<T> {
     InternalPage, // TODO
 }
 
-#[cfg(test)]
 #[derive(Debug, PartialEq, Eq)]
 pub enum NodeDump {
     Internal(Vec<(Vec<u8>, NodeDump)>),

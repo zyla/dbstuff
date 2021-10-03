@@ -124,7 +124,6 @@ impl<T: Deref<Target = PageData>, Meta> TupleBlockPage<T, Meta> {
         &self.data
     }
 
-    #[cfg(test)]
     pub(crate) fn dump_tuples(&self) -> Vec<Vec<u8>> {
         (0..self.tuple_count())
             .map(|index| self.get_tuple(index).unwrap().to_vec())

@@ -12,6 +12,7 @@ buffer_pool = { path = "../buffer-pool" }
 proptest = "0.10.1"
 proptest-derive = "0.2.0"
 async-recursion = "0.3.2"
+futures = "0.3.17"
 
 [dev-dependencies]
 insta = "0.16.1"
