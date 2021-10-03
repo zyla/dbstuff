@@ -15,6 +15,6 @@ async fn main() -> Result<()> {
     while let Some(line) = lines.try_next().await? {
         btree.insert(line.as_bytes(), &[]).await?;
     }
-    println!("{:?}", btree.dump_tree().await?);
+    println!("{:#?}", btree.dump_tree().await?);
     Ok(())
 }

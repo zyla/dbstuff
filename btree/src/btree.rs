@@ -43,105 +43,120 @@ impl<'a> BTree<'a> {
     /// When already there, overwrites the value.
     pub async fn insert(&self, key: &[u8], value: &[u8]) -> Result<()> {
         let (meta, mut page) = self.get_root_page_write().await?;
-        let parent = Parent::MetaPage(meta);
+        let mut parent = Parent::MetaPage(meta);
 
-        if !page.metadata().is_leaf() {
-            unimplemented!("Only leaf search implemented for now");
-        }
-
-        match page.binary_search(key) {
-            SearchResult::Found(_) => {
-                unimplemented!("replacing existing key");
-            }
-            SearchResult::NotFound(insert_index) => {
-                let tuple_size = leaf_tuple::size(key, value);
-                match page.alloc_tuple_at(insert_index, tuple_size) {
-                    Ok(tuple) => {
-                        leaf_tuple::write(tuple, key, value);
-                        page.dirty();
-                        Ok(())
+        loop {
+            if page.metadata().is_leaf() {
+                match page.binary_search(key) {
+                    SearchResult::Found(_) => {
+                        unimplemented!("replacing existing key");
                     }
-                    Err(page::Error::PageFull) => {
-                        // FIXME: crash in case the tuple is too big to fit in any page - we don't
-                        // support overflow
-                        let new_sibling_page =
-                            self.buffer_pool.allocate_page().await?.write().await;
-                        let mut new_sibling = NodePage::new_leaf(new_sibling_page);
-                        let split_index = page.get_split_index(insert_index, tuple_size);
-                        let num_tuples = page.tuple_count() + 1;
+                    SearchResult::NotFound(insert_index) => {
+                        let tuple_size = leaf_tuple::size(key, value);
+                        match page.alloc_tuple_at(insert_index, tuple_size) {
+                            Ok(tuple) => {
+                                leaf_tuple::write(tuple, key, value);
+                                page.dirty();
+                                return Ok(());
+                            }
+                            Err(page::Error::PageFull) => {
+                                // FIXME: crash in case the tuple is too big to fit in any page - we don't
+                                // support overflow
+                                let new_sibling_page =
+                                    self.buffer_pool.allocate_page().await?.write().await;
+                                let mut new_sibling = NodePage::new_leaf(new_sibling_page);
+                                let split_index = page.get_split_index(insert_index, tuple_size);
+                                let num_tuples = page.tuple_count() + 1;
 
-                        for target_index in split_index..num_tuples {
-                            if target_index == insert_index {
-                                // this is the new tuple
-                                match new_sibling
-                                    .alloc_tuple_at(insert_index - split_index, tuple_size)
-                                {
-                                    Ok(tuple) => {
-                                        leaf_tuple::write(tuple, key, value);
-                                    }
-                                    Err(page::Error::PageFull) => {
-                                        panic!("new tuple does not fit after split")
+                                for target_index in split_index..num_tuples {
+                                    if target_index == insert_index {
+                                        // this is the new tuple
+                                        match new_sibling
+                                            .alloc_tuple_at(insert_index - split_index, tuple_size)
+                                        {
+                                            Ok(tuple) => {
+                                                leaf_tuple::write(tuple, key, value);
+                                            }
+                                            Err(page::Error::PageFull) => {
+                                                panic!("new tuple does not fit after split")
+                                            }
+                                        }
+                                    } else {
+                                        let source_index = if target_index > insert_index {
+                                            target_index - 1
+                                        } else {
+                                            target_index
+                                        };
+                                        new_sibling
+                                            .insert_tuple(
+                                                page.get_tuple(source_index).expect("dead tuple"),
+                                            )
+                                            .expect("old tuple does not fit after split");
                                     }
                                 }
-                            } else {
-                                let source_index = if target_index > insert_index {
-                                    target_index - 1
+
+                                if insert_index < split_index {
+                                    // Inserted tuple lands on the old page.
+                                    unsafe { page.header_mut() }.tuple_count =
+                                        (split_index - 1) as u16;
+                                    let tuple = page
+                                        .alloc_tuple_at(insert_index, tuple_size)
+                                        .expect("new tuple does not fit after page split");
+                                    leaf_tuple::write(tuple, key, value);
                                 } else {
-                                    target_index
-                                };
-                                new_sibling
-                                    .insert_tuple(page.get_tuple(source_index).expect("dead tuple"))
-                                    .expect("old tuple does not fit after split");
+                                    unsafe { page.header_mut() }.tuple_count = split_index as u16;
+                                }
+
+                                new_sibling.page.dirty();
+
+                                match parent {
+                                    Parent::InternalPage(_) => {
+                                        // TODO: insert into the parent
+                                        unimplemented!("splitting non-root page")
+                                    }
+                                    Parent::MetaPage(mut meta_page) => {
+                                        // We are splitting the root page. Create a new internal page to
+                                        // replace the root.
+                                        let new_root_page =
+                                            self.buffer_pool.allocate_page().await?.write().await;
+                                        let mut new_root = NodePage::new_internal(
+                                            new_root_page,
+                                            page.metadata().level + 1,
+                                            page.id(),
+                                        );
+                                        let split_key = new_sibling.get_tuple_key(0);
+                                        let sibling_pointer_tuple = new_root
+                                            .alloc_tuple_at(1, pivot_tuple::size(split_key))
+                                            .expect("no space for key in new root");
+                                        pivot_tuple::write(
+                                            sibling_pointer_tuple,
+                                            new_sibling.id(),
+                                            split_key,
+                                        );
+                                        new_root.page.dirty();
+
+                                        meta_page.metadata_mut().root_page_id = new_root.id();
+                                        meta_page.data.dirty();
+                                    }
+                                }
+
+                                return Ok(());
                             }
                         }
-
-                        if insert_index < split_index {
-                            // Inserted tuple lands on the old page.
-                            unsafe { page.header_mut() }.tuple_count = (split_index - 1) as u16;
-                            let tuple = page
-                                .alloc_tuple_at(insert_index, tuple_size)
-                                .expect("new tuple does not fit after page split");
-                            leaf_tuple::write(tuple, key, value);
-                        } else {
-                            unsafe { page.header_mut() }.tuple_count = split_index as u16;
-                        }
-
-                        new_sibling.page.dirty();
-
-                        match parent {
-                            Parent::InternalPage => {
-                                // TODO: insert into the parent
-                                unimplemented!("splitting non-root page")
-                            }
-                            Parent::MetaPage(mut meta_page) => {
-                                // We are splitting the root page. Create a new internal page to
-                                // replace the root.
-                                let new_root_page =
-                                    self.buffer_pool.allocate_page().await?.write().await;
-                                let mut new_root = NodePage::new_internal(
-                                    new_root_page,
-                                    page.metadata().level + 1,
-                                    page.id(),
-                                );
-                                let split_key = new_sibling.get_tuple_key(0);
-                                let sibling_pointer_tuple = new_root
-                                    .alloc_tuple_at(1, pivot_tuple::size(split_key))
-                                    .expect("no space for key in new root");
-                                pivot_tuple::write(
-                                    sibling_pointer_tuple,
-                                    new_sibling.id(),
-                                    split_key,
-                                );
-                                new_root.page.dirty();
-
-                                meta_page.metadata_mut().root_page_id = new_root.id();
-                                meta_page.data.dirty();
-                            }
-                        }
-
-                        Ok(())
                     }
                 }
+            } else {
+                // internal node; find descendant
+                let pivot_index = match page.binary_search(key) {
+                    SearchResult::Found(index) => index,
+                    SearchResult::NotFound(index) => index - 1,
+                };
+                let downlink_pointer =
+                    pivot_tuple::get_header(page.get_tuple(pivot_index).unwrap()).downlink_pointer;
+                let next_page = self.get_node_page_write(downlink_pointer).await?;
+                let next_parent = page;
+                page = next_page;
+                parent = Parent::InternalPage(next_parent);
             }
         }
     }
@@ -156,6 +171,15 @@ impl<'a> BTree<'a> {
     async fn get_node_page(&self, page_id: PageId) -> Result<NodePage<PinnedPageReadGuard<'a>>> {
         Ok(NodePage::from_existing(
             self.buffer_pool.get_page(page_id).await?.read().await,
+        ))
+    }
+
+    async fn get_node_page_write(
+        &self,
+        page_id: PageId,
+    ) -> Result<NodePage<PinnedPageWriteGuard<'a>>> {
+        Ok(NodePage::from_existing(
+            self.buffer_pool.get_page(page_id).await?.write().await,
         ))
     }
 
@@ -212,7 +236,7 @@ impl<'a> BTree<'a> {
 
 enum Parent<T> {
     MetaPage(MetaPage<T>),
-    InternalPage, // TODO
+    InternalPage(NodePage<T>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
