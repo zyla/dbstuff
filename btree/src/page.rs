@@ -67,10 +67,6 @@ impl<T: Deref<Target = PageData>, Meta> TupleBlockPage<T, Meta> {
         page
     }
 
-    pub fn unwrap(&self) -> &T {
-        &self.data
-    }
-
     pub fn header(&self) -> &PageHeader {
         unsafe { mem::transmute(self.data.as_ptr()) }
     }
@@ -184,6 +180,7 @@ impl<T: DerefMut<Target = PageData>, Meta: Copy> TupleBlockPage<T, Meta> {
     }
 
     /// Delete a tuple, shifting the tuples after it one slot left.
+    #[allow(dead_code)]
     pub fn delete_tuple(&mut self, index: SlotIndex) {
         let tuple_count = self.tuple_count();
         assert!(index < tuple_count);
@@ -247,6 +244,7 @@ impl<T: DerefMut<Target = PageData>, Meta: Copy> TupleBlockPage<T, Meta> {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn get_tuple_mut(&mut self, index: SlotIndex) -> Option<&mut [u8]> {
         let TupleDescriptor { offset, size } = self.get_tuple_descriptor(index);
         if offset == 0 {
