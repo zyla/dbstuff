@@ -1,5 +1,9 @@
+#![allow(dead_code)]
+
 use crate::page;
 use crate::page::TupleBlockPage;
+#[cfg(test)]
+use async_recursion::async_recursion;
 use buffer_pool::buffer_pool::{BufferPool, PinnedPageReadGuard, PinnedPageWriteGuard, Result};
 use buffer_pool::disk_manager::{PageData, PageId};
 use std::cmp::Ordering;
@@ -40,7 +44,7 @@ impl<'a> BTree<'a> {
     /// When already there, overwrites the value.
     pub async fn insert(&self, key: &[u8], value: &[u8]) -> Result<()> {
         let (meta, mut page) = self.get_root_page_write().await?;
-        let mut parent = Parent::MetaPage(meta);
+        let parent = Parent::MetaPage(meta);
 
         if !page.metadata().is_leaf() {
             unimplemented!("Only leaf search implemented for now");
@@ -179,7 +183,8 @@ impl<'a> BTree<'a> {
     }
 
     #[cfg(test)]
-    pub async fn dump_node(&self, page: NodePage<PinnedPageReadGuard<'a>>) -> Result<NodeDump> {
+    #[async_recursion]
+    async fn dump_node(&self, page: NodePage<PinnedPageReadGuard<'a>>) -> Result<NodeDump> {
         if page.metadata().is_leaf() {
             Ok(NodeDump::Leaf(
                 page.dump_tuples()

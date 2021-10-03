@@ -1,6 +1,5 @@
 use crate::btree::{BTree, NodeDump};
-use crate::page;
-use crate::page::{PageFull, TupleBlockPage};
+
 use buffer_pool::buffer_pool::{BufferPool, Result};
 use buffer_pool::disk_manager::PAGE_SIZE;
 use buffer_pool::disk_manager_mem::DiskManagerMem;
@@ -102,7 +101,7 @@ async fn test_page_split() -> Result<()> {
                 NodeDump::Leaf(vec![(vec![1; PAGE_SIZE / 2], vec![101])])
             ),
             (
-                vec![1; PAGE_SIZE / 2],
+                vec![2; PAGE_SIZE / 2],
                 NodeDump::Leaf(vec![(vec![2; PAGE_SIZE / 2], vec![102])])
             )
         ])
