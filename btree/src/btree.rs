@@ -109,10 +109,22 @@ impl<'a> BTree<'a> {
 
                                 new_sibling.page.dirty();
 
+                                let split_key = new_sibling.get_tuple_key(0);
+
                                 match parent {
-                                    Parent::InternalPage(_) => {
-                                        // TODO: insert into the parent
-                                        unimplemented!("splitting non-root page")
+                                    Parent::InternalPage {
+                                        mut parent_page,
+                                        index,
+                                    } => {
+                                        // TODO: write a test for this
+                                        let sibling_pointer_tuple = parent_page
+                                            .alloc_tuple_at(index + 1, pivot_tuple::size(split_key))
+                                            .expect("no space for split key in internal page"); // TODO: split recursively
+                                        pivot_tuple::write(
+                                            sibling_pointer_tuple,
+                                            new_sibling.id(),
+                                            split_key,
+                                        );
                                     }
                                     Parent::MetaPage(mut meta_page) => {
                                         // We are splitting the root page. Create a new internal page to
@@ -124,7 +136,6 @@ impl<'a> BTree<'a> {
                                             page.metadata().level + 1,
                                             page.id(),
                                         );
-                                        let split_key = new_sibling.get_tuple_key(0);
                                         let sibling_pointer_tuple = new_root
                                             .alloc_tuple_at(1, pivot_tuple::size(split_key))
                                             .expect("no space for key in new root");
@@ -156,7 +167,10 @@ impl<'a> BTree<'a> {
                 let next_page = self.get_node_page_write(downlink_pointer).await?;
                 let next_parent = page;
                 page = next_page;
-                parent = Parent::InternalPage(next_parent);
+                parent = Parent::InternalPage {
+                    parent_page: next_parent,
+                    index: pivot_index,
+                };
             }
         }
     }
@@ -236,7 +250,10 @@ impl<'a> BTree<'a> {
 
 enum Parent<T> {
     MetaPage(MetaPage<T>),
-    InternalPage(NodePage<T>),
+    InternalPage {
+        parent_page: NodePage<T>,
+        index: usize,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq)]
